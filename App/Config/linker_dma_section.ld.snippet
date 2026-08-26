@@ -1,0 +1,27 @@
+  /* ------------------------------------------------------------------------
+   * .dma_buffer  --  vung dem danh cho DMA1 / DMA2
+   *
+   * .bss va .data mac dinh nam o DTCMRAM (0x20000000). DTCM chi noi truc tiep
+   * voi loi Cortex-M7, DMA1/DMA2 KHONG truy cap duoc vung nay -> moi transfer
+   * se hong hoac sinh bus fault.
+   *
+   * Section nay dat o RAM = AXI SRAM (0x24000000), vung ma DMA1/DMA2 doc ghi
+   * binh thuong va luon duoc cap clock (khac RAM_D2 phai bat RCC_AHB2ENR).
+   *
+   * Cach dung: khai bao bien bang macro FC_DMA_BUFFER trong fc_types.h.
+   *
+   * LUU Y: CubeMX ghi de file .ld nay moi lan Generate Code. Neu build bao
+   * loi "section .dma_buffer will not fit" hoac cac bien DMA quay ve
+   * 0x200xxxxx thi dan lai doan nay.
+   * ------------------------------------------------------------------------ */
+  .dma_buffer (NOLOAD) : ALIGN(32)
+  {
+    _sdma_buffer = .;
+    *(.dma_buffer)
+    *(.dma_buffer*)
+    . = ALIGN(32);
+    _edma_buffer = .;
+  } >RAM
+
+/* Dan khoi tren vao STM32H743XX_FLASH.ld, ngay sau section .bss,
+   moi lan CubeMX ghi de lai file .ld. */

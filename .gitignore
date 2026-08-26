@@ -1,0 +1,89 @@
+# =============================================================================
+#  FCH743_V1.0 — .gitignore
+#
+#  Nguyên tắc: giữ mọi thứ CẦN để build được từ một bản clone sạch, bỏ những
+#  thứ sinh ra được hoặc chỉ có ý nghĩa trên máy này.
+# =============================================================================
+
+
+# --- Sản phẩm biên dịch -------------------------------------------------------
+#
+# 145 MB, sinh lại bằng một lệnh build.
+/build/
+/Debug/
+/Release/
+/cmake-build-*/
+
+*.o
+*.obj
+*.elf
+*.bin
+*.hex
+*.map
+*.list
+*.su
+*.d
+
+
+# --- Chỉ số CodeGraph ---------------------------------------------------------
+#
+# 52 MB cơ sở dữ liệu SQLite, dựng lại được từ mã nguồn và chỉ có nghĩa trên
+# máy đã cài CodeGraph.
+/.codegraph/
+
+
+# --- Log đo đạc ---------------------------------------------------------------
+#
+# Log bắt từ UART trong lúc gỡ lỗi. Cần giữ lại một bộ nào đó thì chép vào
+# App/Docs/ rồi thêm ngoại lệ cho nó.
+log.txt
+logimu.txt
+*.log
+uart*.log
+
+
+# --- Cài đặt trình soạn thảo và IDE -------------------------------------------
+/.vscode/
+/.idea/
+/.settings/
+/.metadata/
+*.launch
+
+
+# --- CubeMX -------------------------------------------------------------------
+#
+# GIỮ FCH743_V1.0.ioc và .mxproject — cái đầu là nguồn sự thật của toàn bộ cấu
+# hình phần cứng, cái sau cho CubeMX biết nó đã sinh ra những file nào để dọn
+# đúng chỗ khi generate lại.
+*.ioc.bak
+*.ioc.old
+~$*
+
+
+# --- CMSIS: các phần KHÔNG được biên dịch --------------------------------------
+#
+# Gói CMSIS mà CubeMX chép vào nặng 229 MB, nhưng dự án này chỉ dùng phần
+# Include, Core và Device. Bốn thư mục dưới đây KHÔNG có tham chiếu nào trong
+# CMakeLists.txt hay cmake/, tức không hề tham gia build:
+#
+#     DSP    178 MB, 757 file  (kèm cả bộ test và wrapper Python)
+#     NN       2 MB
+#     RTOS     1 MB
+#     RTOS2    1 MB
+#     docs     1 MB
+#
+# Bỏ chúng đưa repo từ ~250 MB xuống còn ~65 MB.
+#
+# CẦN DÙNG LẠI thì mở CubeMX, bật gói tương ứng rồi Generate Code — CubeMX sẽ
+# chép lại. Nhớ xoá dòng tương ứng ở đây trước khi commit.
+/Drivers/CMSIS/DSP/
+/Drivers/CMSIS/NN/
+/Drivers/CMSIS/RTOS/
+/Drivers/CMSIS/RTOS2/
+/Drivers/CMSIS/docs/
+
+
+# --- Rác hệ điều hành ---------------------------------------------------------
+Thumbs.db
+desktop.ini
+.DS_Store
