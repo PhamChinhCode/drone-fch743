@@ -216,7 +216,28 @@ uint8_t USBD_MSC_Init(USBD_HandleTypeDef *pdev, uint8_t cfgidx)
   UNUSED(cfgidx);
   USBD_MSC_BOT_HandleTypeDef *hmsc;
 
-  hmsc = (USBD_MSC_BOT_HandleTypeDef *)USBD_malloc(sizeof(USBD_MSC_BOT_HandleTypeDef));
+  /*
+   * SUA SO VOI BAN GOC CUA ST - dung bo nho tinh rieng, khong goi USBD_malloc.
+   *
+   * USBD_malloc tro toi USBD_static_malloc() trong USB_DEVICE/Target/usbd_conf.c,
+   * ma ham do do CubeMX sinh ra va chi cap phat dung sizeof(USBD_CDC_HandleTypeDef)
+   * = 540 byte, trong khi handle nay la 628 byte. Ghi tran 88 byte vao mot bien
+   * static thi dam thang sang bien ke ben.
+   *
+   * Truoc day cach chua la noi rong mang trong usbd_conf.c, nhung file do bi
+   * CubeMX ghi de moi lan Generate Code - da mat that mot lan. Con thu muc
+   * Class/MSC nay thi CubeMX KHONG he dung toi, vi trong .ioc
+   * USB_DEVICE.CLASS_NAME_FS van la CDC. Da kiem chung qua mot lan Generate
+   * Code: thu muc nay nguyen ven tung byte.
+   *
+   * Nen dat cho o day thi khong con gi phai dat lai bang tay nua.
+   *
+   * Chi co mot thiet bi USB nen mot handle la du. Dung y nghia voi cach cu:
+   * USBD_static_malloc cung tra ve mot vung tinh dung nhu vay.
+   */
+  static USBD_MSC_BOT_HandleTypeDef s_msc_handle;
+
+  hmsc = &s_msc_handle;
 
   if (hmsc == NULL)
   {
@@ -291,7 +312,7 @@ uint8_t USBD_MSC_DeInit(USBD_HandleTypeDef *pdev, uint8_t cfgidx)
     /* De-Init the BOT layer */
     MSC_BOT_DeInit(pdev);
 
-    (void)USBD_free(pdev->pClassDataCmsit[pdev->classId]);
+    /* Khong goi USBD_free: handle la bien static, xem chu thich o MSC_Init. */
     pdev->pClassDataCmsit[pdev->classId]  = NULL;
     pdev->pClassData = NULL;
   }

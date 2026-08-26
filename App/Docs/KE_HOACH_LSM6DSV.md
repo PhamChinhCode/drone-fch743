@@ -1417,7 +1417,7 @@ sector, hai bên cùng ghi thì hỏng bảng FAT), **chặn ARM** qua cờ
 | `App/Storage/blackbox.c/.h` | ghi log; `FATFS`/`FIL` đặt trong `.dma_buffer` |
 | `App/Storage/usb_msc.c/.h` | lớp ghép MSC ↔ thẻ SD, có bộ đệm trung chuyển AXI SRAM |
 | `USB_DEVICE/App/usb_device.c` | xung HSI48+CRS, chọn lớp MSC/CDC theo K1 (trong `USER CODE`) |
-| `USB_DEVICE/Target/usbd_conf.c` | 🔴 **SỬA TAY** — nới `USBD_static_malloc()` |
+| `USB_DEVICE/Target/usbd_conf.c` | ~~sửa tay~~ — **đã gỡ bỏ**, xem mục cuối tài liệu |
 | `Core/Src/main.c` | mount sớm; chế độ MSC dừng trước cảm biến; chặn K1 |
 | `App/State/fc_state.c/.h`, `App/Control/arming.c` | cờ `ARM_BLOCK_USB_MSC` |
 | `Middlewares/.../Class/MSC/` | chép từ gói H7 V1.12.1 (`usbd_core.c` giống hệt từng byte) |
@@ -1430,3 +1430,184 @@ sector, hai bên cùng ghi thì hỏng bảng FAT), **chặn ARM** qua cờ
 - `BB_BUFFER_BYTES` 256 KB ở 100 Hz với bản ghi 48 byte cho khoảng **54 giây**.
   Bay lâu hơn thì `blackbox_dropped()` sẽ khác 0. Cần đo xem một chuyến bay
   thật dài bao nhiêu rồi mới quyết có phải hạ `BB_RATE_HZ` hay không.
+
+### Đã thử Generate Code lại — kết quả thật (27/08/2026)
+
+Người dùng bật HSI48 trong CubeMX rồi Generate Code. Đo lại toàn bộ:
+
+| Chỗ sửa | Kết quả thật |
+|---|---|
+| `App/**` | ✅ nguyên vẹn |
+| `CMakeLists.txt` gốc (khai báo nguồn MSC) | ✅ nguyên vẹn |
+| `Core/Src/main.c` — vùng `USER CODE` | ✅ nguyên vẹn |
+| `USB_DEVICE/App/usb_device.c` | ✅ **không đổi một byte** |
+| `usbd_conf.c` — include trong `USER CODE` | ✅ nguyên vẹn |
+| `usbd_conf.c` — `USBD_static_malloc()` | ❌ bị trả về bản CubeMX → **đã xử lý dứt điểm, xem mục dưới** |
+| `Middlewares/.../Class/MSC/` | ✅ CubeMX không xoá |
+| `cmake/stm32cubemx/CMakeLists.txt` | ✅ không còn gì của mình ở đó |
+
+Tức là dự đoán đúng hoàn toàn: **chỉ một mục phải đặt lại**. Đã đặt lại và
+nạp kiểm tra — blackbox mount OK (file số 9), CDC lên `COM17`.
+
+`Core/Src/main.c` hiện ra 267 dòng thay đổi nhưng gần như toàn bộ là CubeMX
+định dạng lại comment và khoảng trắng theo kiểu của nó. Thay đổi chức năng
+đúng hai dòng:
+
+```c
+RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI48|RCC_OSCILLATORTYPE_HSE;
+RCC_OscInitStruct.HSI48State     = RCC_HSI48_ON;
+```
+
+⚠️ Lưu ý: CubeMX bật HSI48 **nhưng không** phát mã đặt bộ mux xung USB —
+`PeriphClockSelection` vẫn chỉ có `RCC_PERIPHCLK_ADC`, dù trong `.ioc` đã có
+`RCC.USBCLockSelection=RCC_USBCLKSOURCE_HSI48`. Nghĩa là khối cấp xung trong
+vùng `USER CODE` của `MX_USB_DEVICE_Init()` **vẫn đang gánh việc**, không phải
+đồ thừa. Đừng xoá nó.
+
+### Gỡ nốt chỗ sửa tay cuối cùng — không còn gì phải nhớ (27/08/2026)
+
+Mọi kết luận ở trên về việc "phải đặt lại `USBD_static_malloc()` sau mỗi lần
+Generate Code" **đã hết hiệu lực**. Chỗ sửa đó đã bị gỡ bỏ hoàn toàn.
+
+Lần Generate Code vừa rồi cho một dữ kiện mới: `Middlewares/.../Class/MSC/`
+**nguyên vẹn từng byte**. CubeMX không hề đụng tới nó, vì trong `.ioc`
+`USB_DEVICE.CLASS_NAME_FS` vẫn là `CDC` nên nó không biết lớp MSC tồn tại.
+
+Nghĩa là thư mục đó giờ thuộc về mình, và đó mới là chỗ đúng để sửa.
+
+Gốc rễ của vấn đề là `usbd_msc.c` gọi `USBD_malloc()`, mà macro đó trỏ tới
+`USBD_static_malloc()` bên `usbd_conf.c` — file CubeMX sinh. Thay vì đi nới
+cái bộ cấp phát dùng chung ấy, cho MSC **bộ nhớ tĩnh của riêng nó** ngay trong
+`usbd_msc.c`:
+
+```c
+static USBD_MSC_BOT_HandleTypeDef s_msc_handle;
+hmsc = &s_msc_handle;
+```
+
+và bỏ lời gọi `USBD_free()` tương ứng ở `USBD_MSC_DeInit()`.
+
+Không mất mát gì: `USBD_static_malloc()` bản gốc cũng chỉ trả về một vùng tĩnh
+đúng như vậy, và chỉ có một thiết bị USB nên một handle là đủ.
+
+Sau đó `USB_DEVICE/Target/usbd_conf.c` được trả về **đúng nguyên bản CubeMX**,
+không còn dòng sửa tay nào.
+
+**Đã kiểm chứng trên phần cứng sau khi đổi:**
+
+| | |
+|---|---|
+| Chế độ MSC | đĩa `FCH743 Blackbox SD` 7,95 GB Online, đọc được `LOG0000..LOG0009` |
+| Chế độ bay | CDC lên `COM17`, blackbox mount, mở `LOG0010.CSV` |
+| `usbd_conf.c` | 0 chỗ sửa tay |
+
+> Bài học: khi buộc phải sửa file do công cụ sinh ra, hãy tìm xem có file nào
+> **công cụ không quản lý** mà đạt được cùng mục đích không. Ở đây thư mục
+> middleware chép tay chính là chỗ đó.
+
+**Hệ quả cho quy trình:** Generate Code lại bây giờ **không cần làm gì thêm**.
+Nhưng vẫn giữ nguyên hai điều kiện:
+
+1. `.ioc` phải giữ `USB_DEVICE.CLASS_NAME_FS = CDC`. Đổi sang MSC thì CubeMX
+   sẽ chiếm lại thư mục `Class/MSC/`, ghi đè chỗ sửa trên, bỏ CDC khỏi build
+   và sinh `usbd_storage_if.c` trùng tên với `App/Storage/usb_msc.c`.
+2. Đừng xoá khối cấp xung HSI48 trong vùng `USER CODE` của
+   `MX_USB_DEVICE_Init()` — CubeMX vẫn không phát mã đặt bộ mux xung USB.
+
+---
+
+## Thẻ SD hỏng làm treo cả bộ điều khiển bay 🔴 (27/08/2026)
+
+Triệu chứng người dùng báo: bo mạch **im hoàn toàn**, không UART, không USB,
+và **bấm reset không cứu được**.
+
+### Gốc rễ
+
+CubeMX sinh ra trong `MX_SDMMC1_SD_Init()`:
+
+```c
+if (HAL_SD_Init(&hsd1) != HAL_OK) { Error_Handler(); }
+```
+
+và `Error_Handler()` nguyên bản là:
+
+```c
+__disable_irq();
+while (1) { }
+```
+
+Tắt ngắt rồi quay vòng vĩnh viễn. `MX_SDMMC1_SD_Init()` đứng ở dòng 179, tức
+**trước** cả `MX_USB_DEVICE_Init()` và trước `dbg_console_init()`. Nên khi thẻ
+lỗi thì:
+
+- không dòng UART nào kịp ra → nhìn như chip chết,
+- USB không enumerate → không cắm máy tính kiểm tra được,
+- bấm reset lại chạy đúng vào chỗ đó → không thoát được.
+
+Ghi log ra thẻ chỉ là **phụ kiện**. Máy bay phải bay được khi không có thẻ,
+khi thẻ hỏng, hay khi quên cắm thẻ.
+
+### Cách chữa
+
+Đặt cờ quanh lời gọi, ngay trong hai vùng `USER CODE` mà CubeMX chừa sẵn:
+
+```c
+/* USER CODE BEGIN SDMMC1_Init 1 */
+g_sd_init_in_progress = true;
+/* USER CODE END SDMMC1_Init 1 */
+    ...
+/* USER CODE BEGIN SDMMC1_Init 2 */
+g_sd_init_in_progress = false;
+/* USER CODE END SDMMC1_Init 2 */
+```
+
+rồi trong `Error_Handler()` (cũng nằm trong `USER CODE`):
+
+```c
+if (g_sd_init_in_progress) {
+    g_sd_init_in_progress = false;
+    g_sd_init_failed      = true;
+    return;                 /* thẻ hỏng thì bay tiếp, không treo */
+}
+__disable_irq();
+while (1) { }               /* mọi lỗi khác vẫn treo — có chủ ý */
+```
+
+Mọi lỗi khác **vẫn treo như cũ**, và đó là có chủ ý: một ngoại vi bắt buộc
+hỏng mà vẫn cho bay mới là nguy hiểm.
+
+Cả ba chỗ đều trong vùng `USER CODE` nên Generate Code lại không mất.
+
+### Đã đo được sau khi sửa
+
+Với thẻ đang ở trạng thái kẹt thật, bo khởi động trọn vẹn:
+
+```
+THE SD: KHONG KHOI TAO DUOC
+ICM20602: OK          LSM6DSV: OK, WHO_AM_I 0x70
+BMP388: OK            MTF-01P / ELRS / DShot300 / Telemetry: OK
+console: TAT / khong mount duoc the
+```
+
+### Vì sao thẻ kẹt
+
+Nhiều khả năng do nạp lại firmware / bấm reset **trong khi Windows còn đang
+gắn ổ đĩa** ở chế độ MSC — dữ liệu ghi còn nằm trong bộ đệm, thẻ đang dở một
+thao tác thì mất lệnh.
+
+Reset **không** gỡ được, vì reset không cắt điện cho thẻ. Phải **rút hẳn nguồn**.
+
+Đã thêm cảnh báo vào banner chế độ MSC: eject ổ đĩa trong Windows trước, rồi
+mới rút USB và reset.
+
+### Một bài học về công cụ đo, không phải về firmware
+
+Trong lúc lần ra lỗi này tôi đã kết luận nhầm "bo mạch chết" vì UART im 0 byte
+qua nhiều lần thử. Thực ra lõi đang bị **debugger giữ dừng**: đọc `DHCSR`
+(0xE000EDF0) ra `0x00030003`, tức `C_DEBUGEN` và `C_HALT` đều bằng 1. Chuỗi
+lệnh `STM32_Programmer_CLI ... mode=UR` để lại lõi ở trạng thái halt.
+
+`STM32_Programmer_CLI -c port=SWD mode=HOTPLUG -g` thả lõi ra chạy.
+
+Đọc `CFSR`/`HFSR` (0xE000ED28) cũng đáng làm sớm: `CFSR = 0` loại ngay giả
+thuyết hard fault, đỡ mất công đi tìm sai hướng.
