@@ -18,6 +18,7 @@
 #include "ctrl_rate.h"
 #include "mixer.h"
 #include "estimator.h"
+#include "blackbox.h"
 #include "ekf_attitude.h"
 #include "ekf_altitude.h"
 #include "ekf_velocity.h"
@@ -680,6 +681,9 @@ static void emit_header(void)
         break;
     case DBG_MODE_MAG:
         wr_str(&w, "     mx     my     mz |    Btot |  raw_x  raw_y  raw_z |    hz |     count |  err  nack  busy | tt");
+        break;
+    case DBG_MODE_LOG:
+        wr_str(&w, " ban ghi |  suc chua |  bo | file |  xa | loi | trang thai");
         break;
     case DBG_MODE_MAGCAL:
         wr_str(&w, "     mx     my     mz |    Btot |     mau | phu |  off_x  off_y  off_z |   sc_x   sc_y   sc_z | huong dan");
@@ -1713,6 +1717,49 @@ static void emit_magcal(void)
 }
 
 /**
+ * Blackbox — trang thai ghi log ra the SD.
+ *
+ * CACH DOC:
+ *   ban ghi   so ban ghi dang co trong bo dem RAM
+ *   suc chua  toi da chua duoc bao nhieu, va bao nhieu giay o BB_RATE_HZ
+ *   bo        so ban ghi bi BO vi bo dem day. Khac 0 nghia la chuyen bay dai
+ *             hon suc chua - noi BB_BUFFER_BYTES hoac ha BB_RATE_HZ.
+ *   file      dang ghi vao LOGnnnn.CSV
+ *   xa        tien do xa ra the, %
+ *   loi       ma FRESULT cua thao tac the gan nhat. Phai la 0.
+ *
+ * LUONG HOAT DONG: arm -> DANG GHI vao RAM (khong cham the) -> disarm ->
+ * dang xa ra the -> san sang cho chuyen sau.
+ */
+static void emit_log(void)
+{
+    char line[DBG_LINE_MAX];
+    wr_t w = { line, 0, sizeof(line) };
+
+    const uint32_t cap = BB_BUFFER_BYTES / sizeof(bb_record_t);
+
+    wr_i32(&w, (int32_t)blackbox_records(), 9);
+    wr_str(&w, " |");
+    wr_i32(&w, (int32_t)cap, 7);
+    wr_str(&w, "/");
+    wr_i32(&w, (int32_t)(cap / BB_RATE_HZ), 0);
+    wr_ch(&w, 's');
+    wr_str(&w, " |");
+    wr_i32(&w, (int32_t)blackbox_dropped(), 4);
+    wr_str(&w, " |");
+    wr_i32(&w, (int32_t)blackbox_file_index(), 5);
+    wr_str(&w, " |");
+    wr_i32(&w, (int32_t)blackbox_flush_percent(), 4);
+    wr_str(&w, " |");
+    wr_i32(&w, (int32_t)blackbox_last_error(), 4);
+    wr_str(&w, " | ");
+    wr_str(&w, blackbox_state_name());
+
+    wr_eol(&w);
+    (void)tx_push(line, w.len);
+}
+
+/**
  * QMC6309 doc gian tiep qua sensor hub cua LSM6DSV. Cong cu GIAI DOAN 3.
  *
  * CACH DOC:
@@ -2190,6 +2237,7 @@ void dbg_console_update(uint32_t now_ms)
     case DBG_MODE_STATUS:   emit_status();  break;
     case DBG_MODE_IMU2:     emit_imu2();     break;
     case DBG_MODE_IMU2_RAW: emit_imu2_raw(); break;
+    case DBG_MODE_LOG:      emit_log();      break;
     case DBG_MODE_MAG:      emit_mag();      break;
     case DBG_MODE_MAGCAL:   emit_magcal();   break;
     case DBG_MODE_AXISCAL:  emit_axiscal();  break;

@@ -81,6 +81,13 @@ typedef enum {
     ARM_BLOCK_LOW_BATTERY   = (1u << 5),
     ARM_BLOCK_FAILSAFE      = (1u << 6),
     ARM_BLOCK_SWITCH        = (1u << 7),
+
+    /*
+     * Dang o che do doc the qua USB. May tinh dang toan quyen ghi vao tung
+     * sector cua the, ke ca bang FAT - cho bay luc nay thi firmware va may
+     * tinh ghi de len nhau. Chan tuyet doi, khong co ngoai le.
+     */
+    ARM_BLOCK_USB_MSC       = (1u << 8),
 } fc_arm_block_t;
 
 /** Cờ lỗi hệ thống, tích luỹ dần, chỉ xoá khi khởi động lại. */

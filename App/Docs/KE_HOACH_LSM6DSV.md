@@ -1289,6 +1289,7 @@ vĩnh viễn.
 | 2026-08-26 | Cấu hình CubeMX xong: SPI3 mode 3 @8MHz, PB3/PB4/PD6 Very High, PD7 EXTI rising, DMA2 S2/S3, NVIC prio 4. Viết giai đoạn 1. |
 | 2026-08-26 | Chạy thử lần 1: `WHO_AM_I = 0x70` đúng, init OK, nhưng `count = 0`. Nguyên nhân: thiếu `DRDY_PULSED` trong `CTRL4` — INT1 bị chốt mức cao. Đã sửa, thêm ba số chẩn đoán `edges`/`st`/`pd7`. |
 | 2026-08-26 | Chạy thử lần 2 — **giai đoạn 1 chạy được**. 200 dòng, `err`/`ovr` đều 0, không mất mẫu. Thang accel xác nhận đúng (`\|a\|/g` = 1.0028). ODR thực 1846 Hz (−3,9%, dao động nội của chip, chấp nhận). Nhiễu gyro σ ≈ 0.08–0.09 °/s. **Phát hiện: dấu trục Z sai** — `az` = +9.83 thay vì −9.81. Còn nợ: kiểm `hz` của PID và `DBG_MODE_STATUS`. |
+| 2026-08-26 | **Đổi tiêu chí phát hiện chuyển động khi hiệu chuẩn bias: đỉnh-đỉnh → ĐỘ LỆCH CHUẨN.** Triệu chứng: `huy 174 lan` liên tục, bias LSM không bao giờ được trừ (`gx_2` lệch −5 °/s). Nguyên nhân: biên độ đỉnh-đỉnh **tăng theo số mẫu** (~4,5σ trên 1000 mẫu), mà nhiễu nền LSM σ=1,82 cho biên độ ~8,2 °/s — vượt xa ngưỡng 2,0 nên **bất khả thi**. σ không phụ thuộc số mẫu. Sửa cả hai driver, so bình phương để khỏi gọi `sqrtf` trong ISR. Ngưỡng mới: ICM 1,0 (nền 0,09), IMU2 5,0 (nền 1,82). **Đã kiểm: `gx_2` từ −5 về dao động quanh 0, thông báo lỗi biến mất.** |
 | 2026-08-26 | **Tách nguồn từ kế thành `MAG_SOURCE`.** Bỏ nguồn pin và lắp tụ đều không cứu được — QMC6309 vẫn NACK vĩnh viễn ngay cả khi chỉ dùng USB (tình huống trước đó chạy tốt), nên chip hỏng hoặc dây đứt. Chuyển sang lựa chọn cấu hình `NONE/SHUB/I2C`, **giữ nguyên toàn bộ hạ tầng** để lắp module rời sau. Đã kiểm: `health = 0x041F` (bit `SENSOR_MAG` tắt đúng), `rhz` 3756 → **3790**, `lmax` 311 → **231 µs**. |
 | 2026-08-26 | 🔴 **Sự cố phần cứng: cắm pin thì mất QMC6309.** `STATUS_MASTER = 0x09` = ENDOP + NACK, tức hub chạy xong nhưng không ai trả lời. Đo trực tiếp qua ST-Link: LSM6DSV hoàn hảo, dò chip ID **0/10**, quét **8 địa chỉ không cái nào** trả lời. Không phải nhiễu chập chờn, không phải sai địa chỉ — **chip mất nguồn hoặc không hoạt động**. Khớp với phát hiện GĐ2C (nhiễu ESC làm gyro LSM6DSV tăng 20 lần). Quyết định KHÔNG thêm tự-thử-lại vì `mag_init` chặn 2–3 giây, sẽ treo vòng PID và ngừng DShot. |
 | 2026-08-26 | **GĐ4 XONG.** Kiểm chứng bộ số bình phương tối thiểu trên 1756 mẫu: `Btot` = 0,3834 G, **dao động 2,3%** (mục tiêu <5%, trước đó 9,8%). Phụ thuộc hướng giảm từ 19,3% xuống 6,3% — phần dư nhiều khả năng là từ trường tại chỗ thay đổi thật, không phải lỗi cảm biến. **Còn nợ: `MAG_AXIS_*` chưa đo**, và phép thử tăng ga chưa làm. |
@@ -1306,3 +1307,126 @@ vĩnh viễn.
 | 2026-08-26 | `DBG_MODE_STATUS` chia cột như các mode khác (có dòng tiêu đề, thêm `wr_str_pad`/`wr_hex_col`). Thêm `DBG_MODE_AXISCAL` tự nhận chiều trục IMU2 cho giai đoạn 2A — thay quy trình thủ công dễ sai. Thuật toán kiểm bằng mô phỏng qua cả 24 phép quay hợp lệ. |
 | 2026-08-26 | **Phép thử A/B xong.** `rhz` 3801 (tắt) → 3774 (bật) = LSM6DSV chỉ tốn **0,7%**. Khoảng thiếu 5% so với 4000 đã có từ trước, thủ phạm là EKF 6×6 chạy 1 kHz (`lp` đỉnh 215 µs). `SENSOR_IMU2` đã lên trong `health = 0x041F`. Sửa ngưỡng `ovr` từ 250 µs xuống **125 µs** — ngưỡng cũ đọc ra 0 trong khi vẫn mất 5% nhịp. |
 | 2026-08-26 | Chạy thử lần 3 (PID + STATUS). `imu_err = 0`, `dt = 125 µs`, `drop = 0`, không có cờ lỗi IMU nào. **Nhưng `rhz` = 3780 chứ không phải 4000.** Chưa rõ do LSM6DSV hay đã vậy từ trước. Thêm dụng cụ đo: `loop_time_us`/`loop_time_max_us`/`loop_overruns` (đã khai báo trong `system_data_t` và stream ra telemetry từ trước nhưng **chưa ai ghi vào**), nối `SENSOR_IMU2` vào `fc_state_update_health()` (bị sót), thêm công tắc `IMU2_ENABLE` để làm A/B. `DBG_LINE_MAX` 160 → 200 vì dòng STATUS sẽ bị cắt cụt. |
+
+---
+
+## Blackbox ra thẻ SD + đọc thẻ qua cổng USB — 27/08/2026
+
+Việc này nằm ngoài kế hoạch LSM6DSV, nhưng ghi ở đây vì nó lặp lại đúng một
+bài học của dự án và vì nó vá một lỗi hạ tầng đã âm thầm tồn tại từ đầu.
+
+### Cái đã làm được
+
+| Phần | Trạng thái | Bằng chứng đo được |
+|---|---|---|
+| Ghi log ra thẻ SD | ✅ | `f_mount = 0`, ghi 25 byte rồi `f_stat` đọc lại đúng 25 byte |
+| File tự tăng số thứ tự | ✅ | qua nhiều lần khởi động: `LOG0000` → `LOG0006` |
+| Đọc thẻ qua USB (MSC) | ✅ | Windows thấy đĩa `FCH743 Blackbox SD`, 7,95 GB, FAT32, gắn ở `E:` |
+| Chế độ bay không hồi quy | ✅ | không giữ K1 → CDC lên `COM17`, blackbox mount bình thường |
+
+### Lỗi 1 — `f_mount` trả về `FR_DISK_ERR` dù thẻ hoàn toàn khoẻ
+
+Triệu chứng đánh lừa: mọi phép đo trước khi mount đều sạch.
+`HAL_SD_GetCardState = 4` (TRANSFER), `BSP_SD_GetCardState = 0`,
+`HAL_SD_GetError = 0`, `BlockNbr = 15.523.840`. Thẻ tốt, mà mount vẫn hỏng.
+
+Gốc rễ: `SD_read()` truyền **thẳng** con trỏ bộ đệm của FatFs xuống
+`BSP_SD_ReadBlocks_DMA()`. Mà `SDFatFS` và `SDFile` do CubeMX sinh ra là biến
+toàn cục thường → `.bss` → **DTCMRAM ở 0x20000000**. DTCM chỉ nối trực tiếp
+với lõi Cortex-M7; IDMA của SDMMC là bus master trên AHB và **không với tới
+được vùng đó**. Lệnh đọc phát ra rồi không bao giờ hoàn tất.
+
+Đúng cùng bài học đã ghi sẵn trong linker script cho `.dma_buffer`, chỉ khác
+là lần này nạn nhân nằm trong code CubeMX sinh chứ không phải code mình viết.
+
+Cách chữa: `blackbox.c` **tự khai báo** `FATFS`, `FIL` và cả `FIL` dùng để dò
+file, đặt trong `.dma_buffer` (AXI SRAM). Không phải sửa file CubeMX sinh ra
+nên Generate Code lại cũng không mất.
+
+> Cái `FIL` dùng để dò tên file lúc đầu là **biến cục bộ**. Ngăn xếp cũng ở
+> DTCM, nên đó là đúng cùng một lỗi, chỉ chưa phát tác. Đã chuyển thành static.
+
+### Lỗi 2 — lệnh SDMMC chập chờn khi luồng ngắt 8 kHz đang chạy
+
+Bisect 7 điểm qua trình tự khởi động cho thấy trạng thái thẻ đi
+`4 → 4 → 0 → 0 → 4 → 4 → 4`, các điểm hỏng trùng với lúc luồng DRDY 8 kHz của
+IMU đã bật. Lệnh SDMMC đều có hạn thời gian, mà ngắt mức ưu tiên 0 chạy liên
+tục thì chúng trượt hạn.
+
+Cách chữa: gọi `blackbox_init()` **ngay sau** `dbg_console_set_rate(50)`,
+trước mọi driver cảm biến.
+
+Hệ quả kéo theo: chế độ đọc thẻ qua USB cũng đi qua đúng những lệnh SDMMC ấy.
+Lần thử đầu Windows thấy thiết bị nhưng **dung lượng bằng 0**, vì vòng lặp bay
+vẫn chạy. Nên chế độ MSC **dừng hẳn** trước khi khởi tạo cảm biến — xem
+`Core/Src/main.c`.
+
+### Lỗi 3 — USB chưa bao giờ có xung 48 MHz 🔴
+
+Cắm cổng USB của bo vào máy tính thì **không có gì hiện ra**, kể cả CDC.
+
+Gốc rễ: trong `SystemClock_Config()`, `PeriphClockSelection` chỉ có
+`RCC_PERIPHCLK_ADC`, và bộ dao động chỉ bật HSE. **HSI48 không hề được bật**,
+bộ chọn xung USB không hề được đặt. OTG_FS chạy không có xung hợp lệ nên không
+bao giờ enumerate được.
+
+Nghĩa là đường telemetry qua CDC ở `App/Telemetry/tlm_port.c` **chưa từng chạy
+được** kể từ đầu dự án. Không phải lỗi cáp, không phải lỗi lớp thiết bị.
+
+Cách chữa: bật HSI48 + CRS (bám theo gói SOF của máy chủ, vì USB FS đòi sai số
+±0,25% mà HSI48 chạy trần chỉ đạt ±1%) và chọn `RCC_USBCLKSOURCE_HSI48`. Đặt
+trong vùng `USER CODE` của `MX_USB_DEVICE_Init()` — chạy trước `USBD_Init()`
+nên đúng thứ tự, và Generate Code lại không xoá mất.
+
+> **Nên làm trong CubeMX cho gọn:** RCC → bật HSI48, Clock Configuration → USB
+> clock mux → HSI48. Làm rồi thì khối trong `USER CODE` thành thừa nhưng vô
+> hại (đặt lại đúng giá trị cũ).
+
+### Cách chọn chế độ USB
+
+Cổng USB chỉ có một, hai lớp không cùng sống được nếu không dùng mô tả ghép mà
+CubeMX không sinh ra kiểu đó. Nên chọn lúc khởi động:
+
+- **Giữ K1 rồi cấp điện / bấm reset** → enumerate thành ổ đĩa di động, đọc thẻ
+  từ máy tính.
+- **Không giữ** → CDC như cũ, bay bình thường.
+
+Trong chế độ MSC: **không** mount FatFs (máy tính đang toàn quyền ghi từng
+sector, hai bên cùng ghi thì hỏng bảng FAT), **chặn ARM** qua cờ
+`ARM_BLOCK_USB_MSC`, và **dừng hẳn** trước khi khởi tạo cảm biến.
+
+### Hai cái bẫy an toàn đã gỡ
+
+1. **K1 giữ lúc khởi động làm quay động cơ.** Trình xử lý K1 bắt sườn xuống
+   bằng `k1 && !k1_prev`, mà `k1_prev` khởi tạo là `false`. Nút đang bị giữ khi
+   vào tới vòng lặp → vòng đầu tiên thấy "sườn xuống" giả và chạy thử động cơ,
+   đúng lúc tay người dùng đang đặt trên bo mạch. Đã chặn thêm `!usb_msc_active()`.
+2. **`USBD_static_malloc()` cấp phát thiếu chỗ.** Bản CubeMX sinh cấp đúng
+   `sizeof(USBD_CDC_HandleTypeDef)`, trong khi handle MSC lớn hơn (riêng
+   `bot_data[]` đã 512 byte). Để nguyên thì lớp MSC ghi tràn ra ngoài mảng
+   static và đâm thẳng vào biến kế bên. Đã đổi thành lấy kích thước lớn hơn
+   trong hai, tính lúc biên dịch.
+
+> ⚠️ `USB_DEVICE/Target/usbd_conf.c` là **file CubeMX sinh**. Chỗ sửa trên
+> **phải đặt lại sau mỗi lần Generate Code**. Trong file đã ghi rõ `SUA TAY`.
+
+### File đã đụng tới
+
+| File | Việc |
+|---|---|
+| `App/Storage/blackbox.c/.h` | ghi log; `FATFS`/`FIL` đặt trong `.dma_buffer` |
+| `App/Storage/usb_msc.c/.h` | lớp ghép MSC ↔ thẻ SD, có bộ đệm trung chuyển AXI SRAM |
+| `USB_DEVICE/App/usb_device.c` | xung HSI48+CRS, chọn lớp MSC/CDC theo K1 (trong `USER CODE`) |
+| `USB_DEVICE/Target/usbd_conf.c` | 🔴 **SỬA TAY** — nới `USBD_static_malloc()` |
+| `Core/Src/main.c` | mount sớm; chế độ MSC dừng trước cảm biến; chặn K1 |
+| `App/State/fc_state.c/.h`, `App/Control/arming.c` | cờ `ARM_BLOCK_USB_MSC` |
+| `Middlewares/.../Class/MSC/` | chép từ gói H7 V1.12.1 (`usbd_core.c` giống hệt từng byte) |
+| `cmake/stm32cubemx/CMakeLists.txt` | thêm nguồn và include của MSC |
+
+### Còn phải làm
+
+- Chưa ghi được log của một chuyến bay thật — mới chỉ xác nhận dòng tiêu đề
+  xuống thẻ. Cần một lần ARM → bay → DISARM để kiểm tra đường xả bộ đệm.
+- `BB_BUFFER_BYTES` 256 KB ở 100 Hz với bản ghi 48 byte cho khoảng **54 giây**.
+  Bay lâu hơn thì `blackbox_dropped()` sẽ khác 0. Cần đo xem một chuyến bay
+  thật dài bao nhiêu rồi mới quyết có phải hạ `BB_RATE_HZ` hay không.

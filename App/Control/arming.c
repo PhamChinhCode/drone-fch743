@@ -225,5 +225,6 @@ const char *arming_block_reason(void)
     if (b & ARM_BLOCK_THROTTLE_HIGH)          { return "ga chua ve thap"; }
     if (b & ARM_BLOCK_NOT_LEVEL)              { return "may bay nghieng"; }
     if (b & ARM_BLOCK_LOW_BATTERY)            { return "pin yeu"; }
+    if (b & ARM_BLOCK_USB_MSC)                { return "dang doc the qua USB"; }
     return "?";
 }

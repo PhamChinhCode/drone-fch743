@@ -27,6 +27,9 @@
 
 /* USER CODE BEGIN Includes */
 
+/* Can sizeof(USBD_MSC_BOT_HandleTypeDef) trong USBD_static_malloc() o cuoi file. */
+#include "usbd_msc.h"
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -645,7 +648,24 @@ USBD_StatusTypeDef USBD_LL_SetTestMode(USBD_HandleTypeDef *pdev, uint8_t testmod
 void *USBD_static_malloc(uint32_t size)
 {
   UNUSED(size);
-  static uint32_t mem[(sizeof(USBD_CDC_HandleTypeDef)/4)+1];/* On 32-bit boundary */
+  /*
+   * SUA TAY - PHAI DAT LAI SAU MOI LAN CubeMX Generate Code
+   *
+   * Ban CubeMX sinh ra chi cap phat dung sizeof(USBD_CDC_HandleTypeDef).
+   * Bo dieu khien nay dang ky lop USB theo che do chay: giu K1 luc khoi dong
+   * thi no dang ky USBD_MSC de doc the SD qua cong USB, con khong thi dang ky
+   * USBD_CDC nhu cu (xem App/Storage/usb_msc.c va USB_DEVICE/App/usb_device.c).
+   *
+   * Handle cua MSC LON HON handle cua CDC - rieng bot_data[] da la
+   * MSC_MEDIA_PACKET = 512 byte. De nguyen kich thuoc cu thi lop MSC se ghi
+   * tran ra ngoai mang nay, va vi day la bien static nen no dam thang vao
+   * bien ke ben. Loi kieu do rat kho lan ra.
+   *
+   * Vi vay lay kich thuoc lon hon trong hai, tinh luc bien dich.
+   */
+  #define USBD_HANDLE_BYTES                                                          ((sizeof(USBD_CDC_HandleTypeDef) > sizeof(USBD_MSC_BOT_HandleTypeDef))           ? sizeof(USBD_CDC_HandleTypeDef) : sizeof(USBD_MSC_BOT_HandleTypeDef))
+
+  static uint32_t mem[(USBD_HANDLE_BYTES / 4) + 1]; /* On 32-bit boundary */
   return mem;
 }
 

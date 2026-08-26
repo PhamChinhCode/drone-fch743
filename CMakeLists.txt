@@ -56,9 +56,26 @@ file(GLOB_RECURSE APP_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/App/*.c
 )
 
+#  Lop USB MSC (o dia di dong) - chep tay tu goi STM32Cube_FW_H7_V1.12.1
+#
+#  Khai bao O DAY chu khong phai trong cmake/stm32cubemx/CMakeLists.txt, vi
+#  file do do CubeMX sinh ra va bi ghi de moi lan Generate Code. De o day thi
+#  no song sot.
+#
+#  CubeMX khong biet toi lop MSC vi trong .ioc USB_DEVICE.CLASS_NAME_FS van la
+#  CDC - va PHAI de nguyen nhu vay. Doi sang MSC thi CubeMX se bo CDC ra khoi
+#  build (dut duong telemetry USB) va sinh usbd_storage_if.c dung ten voi
+#  App/Storage/usb_msc.c. Bo dieu khien nay chon lop luc chay, khong phai luc
+#  cau hinh - xem App/Storage/usb_msc.h.
+set(USB_MSC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/Middlewares/ST/STM32_USB_Device_Library/Class/MSC)
+
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${APP_SOURCES}
+    ${USB_MSC_DIR}/Src/usbd_msc.c
+    ${USB_MSC_DIR}/Src/usbd_msc_bot.c
+    ${USB_MSC_DIR}/Src/usbd_msc_data.c
+    ${USB_MSC_DIR}/Src/usbd_msc_scsi.c
 )
 
 # Add include paths
@@ -71,6 +88,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/App/Control
     ${CMAKE_CURRENT_SOURCE_DIR}/App/Telemetry
     ${CMAKE_CURRENT_SOURCE_DIR}/App/Storage
+    ${USB_MSC_DIR}/Inc
 )
 
 # Add project symbols (macros)

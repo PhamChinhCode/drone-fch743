@@ -137,8 +137,7 @@ static imu_noise_t s_noise;
 static struct {
     uint32_t count;
     float    sum[AXIS_COUNT];
-    float    min[AXIS_COUNT];
-    float    max[AXIS_COUNT];
+    float    sumsq[AXIS_COUNT];   /* để tính độ lệch chuẩn, xem calibration_feed */
 } s_cal;
 
 /* ==========================================================================
@@ -393,10 +392,6 @@ void lsm6dsv_start_gyro_calibration(void)
     }
 
     memset(&s_cal, 0, sizeof(s_cal));
-    for (int i = 0; i < AXIS_COUNT; i++) {
-        s_cal.min[i] =  1.0e9f;
-        s_cal.max[i] = -1.0e9f;
-    }
 
     g_fc.imu2.calibrated    = false;
     g_fc.imu2.gyro_bias_dps = (vec3f_t){ 0.0f, 0.0f, 0.0f };
@@ -415,37 +410,42 @@ uint8_t lsm6dsv_calibration_progress(void)
 static void calibration_feed(const float gyro_body[AXIS_COUNT])
 {
     for (int i = 0; i < AXIS_COUNT; i++) {
-        s_cal.sum[i] += gyro_body[i];
-        if (gyro_body[i] < s_cal.min[i]) { s_cal.min[i] = gyro_body[i]; }
-        if (gyro_body[i] > s_cal.max[i]) { s_cal.max[i] = gyro_body[i]; }
+        s_cal.sum[i]   += gyro_body[i];
+        s_cal.sumsq[i] += gyro_body[i] * gyro_body[i];
     }
     s_cal.count++;
 
-    if (s_cal.count < IMU2_CALIB_SAMPLE_COUNT) {
-        return;
+    /*
+     * Máy bay chưa đứng yên thì bias tính ra sẽ lệch. Đo bằng ĐỘ LỆCH CHUẨN,
+     * không phải biên độ đỉnh-đỉnh — xem IMU2_CALIB_MOVE_SD_DPS trong
+     * fc_config.h.
+     *
+     * Bản cũ dùng biên độ đỉnh-đỉnh với ngưỡng 2,0 °/s, và vì nhiễu nền của
+     * chính con này đã cho biên độ ~8,2 °/s nên hiệu chuẩn lặp VÔ HẠN — đo
+     * được 174 lần huỷ liên tiếp trong khi máy bay nằm im.
+     */
+    if (s_cal.count >= IMU_CALIB_SD_MIN_SAMPLES) {
+        const float inv = 1.0f / (float)s_cal.count;
+
+        for (int i = 0; i < AXIS_COUNT; i++) {
+            const float mean = s_cal.sum[i] * inv;
+            const float var  = s_cal.sumsq[i] * inv - mean * mean;
+
+            if (var > (IMU2_CALIB_MOVE_SD_DPS * IMU2_CALIB_MOVE_SD_DPS)) {
+                /*
+                 * Bộ đếm này tăng KHÔNG NGỪNG nghĩa là nền nhiễu của chính con
+                 * quay đã vượt ngưỡng, chứ không phải máy bay đang rung.
+                 * Console báo ra để không phải ngồi đoán.
+                 */
+                s_cal_restarts++;
+                memset(&s_cal, 0, sizeof(s_cal));
+                return;
+            }
+        }
     }
 
-    /*
-     * Máy bay có rung trong lúc lấy mẫu thì bias tính ra sẽ lệch. Biên độ
-     * dao động vượt ngưỡng nghĩa là có người chạm vào hoặc có gió — bỏ hết
-     * và làm lại từ đầu.
-     */
-    for (int i = 0; i < AXIS_COUNT; i++) {
-        if ((s_cal.max[i] - s_cal.min[i]) > IMU2_CALIB_MOVE_LIMIT_DPS) {
-            /*
-             * Dem lai. Neu con so nay tang KHONG NGUNG thi khong phai may bay
-             * dang rung - ma la NEN NHIEU cua chinh con quay da vuot nguong,
-             * va hieu chuan se lap vo han trong im lang. Console bao ra de
-             * khong phai ngoi doan.
-             */
-            s_cal_restarts++;
-            memset(&s_cal, 0, sizeof(s_cal));
-            for (int k = 0; k < AXIS_COUNT; k++) {
-                s_cal.min[k] =  1.0e9f;
-                s_cal.max[k] = -1.0e9f;
-            }
-            return;                 /* làm lại từ đầu, giữ nguyên trạng thái */
-        }
+    if (s_cal.count < IMU2_CALIB_SAMPLE_COUNT) {
+        return;
     }
 
     const float inv = 1.0f / (float)s_cal.count;

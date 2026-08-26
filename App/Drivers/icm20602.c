@@ -92,8 +92,7 @@ static imu_noise_t s_noise;
 static struct {
     uint32_t count;
     float    sum[AXIS_COUNT];
-    float    min[AXIS_COUNT];
-    float    max[AXIS_COUNT];
+    float    sumsq[AXIS_COUNT];   /* để tính độ lệch chuẩn, xem calibration_feed */
 } s_cal;
 
 /* ==========================================================================
@@ -302,10 +301,6 @@ void icm20602_start_gyro_calibration(void)
     }
 
     memset(&s_cal, 0, sizeof(s_cal));
-    for (int i = 0; i < AXIS_COUNT; i++) {
-        s_cal.min[i] =  1.0e9f;
-        s_cal.max[i] = -1.0e9f;
-    }
 
     g_fc.imu.calibrated    = false;
     g_fc.imu.gyro_bias_dps = (vec3f_t){ 0.0f, 0.0f, 0.0f };
@@ -324,22 +319,31 @@ uint8_t icm20602_calibration_progress(void)
 static void calibration_feed(const float gyro[AXIS_COUNT])
 {
     for (int i = 0; i < AXIS_COUNT; i++) {
-        s_cal.sum[i] += gyro[i];
-        if (gyro[i] < s_cal.min[i]) s_cal.min[i] = gyro[i];
-        if (gyro[i] > s_cal.max[i]) s_cal.max[i] = gyro[i];
+        s_cal.sum[i]   += gyro[i];
+        s_cal.sumsq[i] += gyro[i] * gyro[i];
+    }
+    s_cal.count++;
 
-        /* Biên độ dao động quá lớn nghĩa là máy bay chưa đứng yên. */
-        if ((s_cal.max[i] - s_cal.min[i]) > IMU_CALIB_MOVE_LIMIT_DPS) {
-            memset(&s_cal, 0, sizeof(s_cal));
-            for (int k = 0; k < AXIS_COUNT; k++) {
-                s_cal.min[k] =  1.0e9f;
-                s_cal.max[k] = -1.0e9f;
+    /*
+     * Máy bay chưa đứng yên thì bias tính ra sẽ lệch. Đo bằng ĐỘ LỆCH CHUẨN,
+     * không phải biên độ đỉnh-đỉnh — xem IMU_CALIB_MOVE_SD_DPS trong
+     * fc_config.h để biết vì sao.
+     *
+     * So bình phương với bình phương để khỏi phải gọi sqrtf trong ISR 8 kHz.
+     */
+    if (s_cal.count >= IMU_CALIB_SD_MIN_SAMPLES) {
+        const float inv = 1.0f / (float)s_cal.count;
+
+        for (int i = 0; i < AXIS_COUNT; i++) {
+            const float mean = s_cal.sum[i] * inv;
+            const float var  = s_cal.sumsq[i] * inv - mean * mean;
+
+            if (var > (IMU_CALIB_MOVE_SD_DPS * IMU_CALIB_MOVE_SD_DPS)) {
+                memset(&s_cal, 0, sizeof(s_cal));
+                return;
             }
-            return;
         }
     }
-
-    s_cal.count++;
 
     if (s_cal.count >= IMU_CALIB_SAMPLE_COUNT) {
         const float inv = 1.0f / (float)s_cal.count;

@@ -427,7 +427,36 @@
 #define IMU_GYRO_FS_DPS 2000          /* 250|500|1000|2000 °/s */
 #define IMU_ACCEL_FS_G 16             /* 2|4|8|16 g            */
 #define IMU_CALIB_SAMPLE_COUNT 2000   /* số mẫu lấy bias gyro  */
-#define IMU_CALIB_MOVE_LIMIT_DPS 2.0f /* rung quá ngưỡng -> hủy */
+
+/*
+ * Ngưỡng phát hiện "máy bay chưa đứng yên" trong lúc lấy bias gyro, tính bằng
+ * ĐỘ LỆCH CHUẨN chứ không phải biên độ đỉnh-đỉnh.
+ *
+ * VÌ SAO ĐỔI: bản cũ so biên độ đỉnh-đỉnh với ngưỡng 2,0 °/s. Cách đó có hai
+ * chỗ hỏng.
+ *
+ * Thứ nhất, biên độ đỉnh-đỉnh TĂNG THEO SỐ MẪU — càng lấy nhiều mẫu càng dễ
+ * gặp giá trị ngoại lai. Với nhiễu Gauss trên 1000-2000 mẫu, biên độ vào
+ * khoảng 4,5σ. Nghĩa là đổi IMU_CALIB_SAMPLE_COUNT là ngưỡng đổi ý nghĩa,
+ * dù chẳng ai sờ tới nó.
+ *
+ * Thứ hai, hệ quả thực tế: LSM6DSV có σ = 1,82 °/s nên biên độ đỉnh-đỉnh của
+ * riêng nhiễu nền đã là ~8,2 °/s, vượt xa ngưỡng 2,0. Hiệu chuẩn lặp VÔ HẠN
+ * — đã đo được 174 lần huỷ liên tiếp — mà máy bay thì nằm im hoàn toàn.
+ *
+ * σ không phụ thuộc số mẫu, nên ngưỡng đặt theo nó mới có ý nghĩa ổn định.
+ *
+ * ICM20602 có nhiễu nền σ ≈ 0,09 °/s. Ngưỡng 1,0 cho dư địa gấp 11 lần mà
+ * vẫn bắt được va chạm hay rung thật (những thứ đó cho σ vài °/s).
+ */
+#define IMU_CALIB_MOVE_SD_DPS 1.0f
+
+/*
+ * Cần bao nhiêu mẫu thì độ lệch chuẩn mới có nghĩa để đem so ngưỡng. Dưới
+ * mức này thì bỏ qua phép kiểm — vài mẫu đầu không nói lên điều gì.
+ * Dùng chung cho cả hai IMU.
+ */
+#define IMU_CALIB_SD_MIN_SAMPLES 64u
 #define IMU_SPI_TIMEOUT_MS 10         /* timeout SPI lúc init  */
 #define IMU_GYRO_LPF_HZ 100.0f        /* lọc gyro cho vòng PID */
 #define IMU_ACCEL_LPF_HZ 30.0f        /* lọc accel cho ước lượng */
@@ -488,7 +517,19 @@
 #define IMU2_GYRO_FS_DPS 2000        /* 125|250|500|1000|2000 °/s */
 #define IMU2_ACCEL_FS_G 16           /* 2|4|8|16 g                */
 #define IMU2_CALIB_SAMPLE_COUNT 1000 /* ~0,52 s ở 1920 Hz         */
-#define IMU2_CALIB_MOVE_LIMIT_DPS 2.0f
+
+/*
+ * Ngưỡng độ lệch chuẩn cho IMU phụ — xem giải thích dài ở IMU_CALIB_MOVE_SD_DPS.
+ *
+ * Đặt CAO HƠN HẲN của ICM20602 vì con LSM6DSV trên bo này có nhiễu nền
+ * σ ≈ 1,82 °/s, tức gấp 20 lần ICM và gấp ~20 lần chính nó lúc mới lắp
+ * (đo được 0,09 °/s ở giai đoạn 1). Nhiều khả năng chip đã suy giảm sau sự
+ * kiện cắm nguồn pin — cùng sự kiện đã giết QMC6309.
+ *
+ * 5,0 cho dư địa ~2,7 lần trên nền nhiễu hiện tại. Thay module mới thì hạ
+ * về 1,0 cho bằng ICM.
+ */
+#define IMU2_CALIB_MOVE_SD_DPS 5.0f
 #define IMU2_SPI_TIMEOUT_MS 10
 #define IMU2_GYRO_LPF_HZ 100.0f /* giữ giống ICM để so sánh công bằng */
 #define IMU2_ACCEL_LPF_HZ 30.0f
@@ -906,6 +947,47 @@
  * Console gỡ lỗi dạng chữ (đọc bằng PuTTY / terminal bất kỳ)
  * ========================================================================== */
 #define DBG_TX_BUFFER_SIZE 1024   /* ring buffer gửi        */
+/* ==========================================================================
+ * Blackbox — ghi log chuyến bay ra thẻ SD
+ *
+ * NGUYÊN TẮC AN TOÀN QUAN TRỌNG NHẤT: KHÔNG BAO GIỜ chạm vào thẻ SD trong
+ * lúc đang ARM.
+ *
+ * f_write() là hàm CHẶN, và thẻ SD có thể khựng hàng chục tới hàng trăm mili
+ * giây khi nó tự dọn khối bên trong. Vòng lặp chính phải xong dưới 250 µs —
+ * một cú khựng như vậy sẽ làm ngừng phát khung DShot, ESC coi như mất tín
+ * hiệu và cắt motor giữa không trung.
+ *
+ * Nên: bay thì ghi vào RAM, hạ xuống rồi mới xả ra thẻ.
+ * ========================================================================== */
+#define BB_ENABLE 1
+
+/*
+ * Nhịp ghi. 100 Hz đủ để nhìn dao động PID (băng thông quan tâm dưới 30 Hz)
+ * mà vẫn cho thời lượng dài. Nâng lên 200 thì thời lượng còn một nửa.
+ */
+#define BB_RATE_HZ 100
+
+/*
+ * Bộ đệm nằm ở AXI SRAM (0x24000000) — vùng còn trống 507 KB, luôn được cấp
+ * clock, và section .dma_buffer đã có sẵn trong linker script.
+ *
+ * KHÔNG dùng RAM_D2 dù nó trống 288 KB: vùng đó cần thêm một section mới
+ * trong file .ld và phải bật RCC_AHB2ENR, mà CubeMX thì ghi đè .ld mỗi lần
+ * Generate Code. Đổi lấy sự mong manh đó để được thêm RAM là không đáng.
+ *
+ * 256 KB / 48 byte mỗi bản ghi = 5461 bản ghi = ~55 giây ở 100 Hz.
+ * Đủ cho các chuyến bay ngắn để chỉnh PID.
+ */
+#define BB_BUFFER_BYTES (256u * 1024u)
+
+/*
+ * Mỗi lần xả ghi bấy nhiêu byte văn bản rồi trả quyền cho vòng lặp. Chỉ chạy
+ * lúc đã DISARM nên khựng không nguy hiểm, nhưng chia nhỏ để console vẫn cập
+ * nhật và người dùng thấy tiến độ.
+ */
+#define BB_FLUSH_CHUNK_BYTES 4096u
+
 #define DBG_LINE_MAX 200          /* do dai toi da mot dong (STATUS dai nhat) */
 #define DBG_DEFAULT_RATE_HZ 20    /* 20 dòng/giây, mắt đọc kịp */
 #define DBG_HEADER_EVERY_LINES 20 /* in lại dòng tiêu đề     */

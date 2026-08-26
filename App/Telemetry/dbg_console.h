@@ -50,6 +50,7 @@ typedef enum {
     DBG_MODE_STATUS,    /**< trạng thái hệ thống, cờ lỗi, thời gian vòng lặp */
     DBG_MODE_IMU2,      /**< LSM6DSV tren SPI3: gyro/accel, hz, |a|/g       */
     DBG_MODE_IMU2_RAW,  /**< so tho LSM6DSV - dung de xac dinh chieu truc   */
+    DBG_MODE_LOG,       /**< Blackbox: trang thai the SD va tien do xa   */
     DBG_MODE_MAG,
     DBG_MODE_MAGCAL,    /**< HIEU CHUAN tu ke - cong cu GIAI DOAN 4       */       /**< QMC6309 qua sensor hub - GIAI DOAN 3        */
     DBG_MODE_AXISCAL,   /**< TU NHAN chieu truc IMU2 - cong cu GIAI DOAN 2A  */

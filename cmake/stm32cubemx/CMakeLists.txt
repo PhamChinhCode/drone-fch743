@@ -106,7 +106,9 @@ set(MX_LINK_DIRS
 set(MX_LINK_LIBS 
     STM32_Drivers
     ${TOOLCHAIN_LINK_LIBRARIES}
-    USB_Device_Library	FatFs	
+    USB_Device_Library
+	FatFs
+	
 )
 # Interface library for includes and symbols
 add_library(stm32cubemx INTERFACE)

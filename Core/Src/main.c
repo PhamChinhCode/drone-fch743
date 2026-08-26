@@ -39,6 +39,8 @@
 #include "dbg_console.h"
 #include "tlm_port.h"
 #include "tlm_stream.h"
+#include "blackbox.h"
+#include "usb_msc.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -205,13 +207,80 @@ int main(void)
    */
   dbg_console_init(&huart1);
   dbg_console_set_rate(50);
+
+  /*
+   * Blackbox. Mount the SD NGAY DAY, truoc moi driver cam bien.
+   *
+   * VI SAO PHAI SOM NHU VAY: cac lenh cua the SD deu co han thoi gian. Khi
+   * luong ngat DRDY 8 kHz cua IMU da chay, no chiem CPU lien tuc va lam cac
+   * lenh nay chap chon — do duoc trang thai the nhay 4 -> 0 -> 4 tuy luc.
+   *
+   * O day chua co ngat toc do cao nao, thoi diem yen tinh nhat trong ca
+   * chuong trinh. f_mount va f_open deu chan va co the mat vai tram ms,
+   * nhung luc nay chan bao lau cung khong sao.
+   *
+   * That bai o day chi lam mat log, may bay van bay binh thuong.
+   */
+  if (usb_msc_active())
+  {
+    /*
+     * Che do doc the qua USB. May tinh dang toan quyen ghi tung sector cua
+     * the. Firmware TUYET DOI khong duoc mount FatFs luc nay - hai ben cung
+     * ghi thi bang FAT hong ngay va mat sach log cu.
+     *
+     * Nen o day khong goi blackbox_init(). Viec chan ARM da lam o
+     * fc_state_can_arm() qua co ARM_BLOCK_USB_MSC.
+     */
+    dbg_println("=====================================================");
+    dbg_println(" CHE DO DOC THE QUA USB (giu K1 luc khoi dong)");
+    dbg_println("   Cam cap USB vao may tinh, the SD hien ra nhu o dia.");
+    dbg_println("   KHONG ghi log va KHONG ARM duoc trong che do nay.");
+    dbg_println("   Muon bay lai: rut USB, bam reset, dung giu K1.");
+    dbg_println("=====================================================");
+
+    /*
+     * DUNG HAN O DAY - khong bao gio vao vong lap bay.
+     *
+     * Khong phai cho gon, ma la BAT BUOC de doc duoc the. Cac lenh SDMMC deu
+     * co han thoi gian; khi luong ngat DRDY 8 kHz cua IMU chay o muc uu tien
+     * 0, no chiem CPU lien tuc va lam cac lenh nay chap chon - da do duoc
+     * trang thai the nhay 4 -> 0 -> 4, va do chinh la thu da lam f_mount hong
+     * truoc day.
+     *
+     * May tinh doc the qua USB thi cung di qua dung nhung lenh SDMMC ay,
+     * nen neu de vong lap bay chay tiep thi Windows se thay o dia rong khong
+     * dung luong. Dung o day thi khong driver cam bien nao duoc khoi tao,
+     * khong co ngat toc do cao nao, va SDMMC duoc yen.
+     *
+     * USB chay hoan toan bang ngat (OTG_FS_IRQHandler) nen vong lap nay khong
+     * can lam gi ca. Dong co cung khong the quay: dshot_init() nam sau day.
+     */
+    for (;;)
+    {
+      HAL_Delay(1000);
+    }
+  }
+  else if (blackbox_init())
+  {
+    dbg_print_int("Blackbox: OK, ghi vao LOG file so", (int32_t)blackbox_file_index());
+    dbg_println("  Ghi vao RAM khi ARM, xa ra the sau khi DISARM.");
+  }
+  else
+  {
+    dbg_println("Blackbox: LOI - khong ghi log duoc.");
+    dbg_println(blackbox_state_name());
+    dbg_print_int("  ma loi FRESULT", (int32_t)blackbox_last_error());
+  }
+
+
+
   /*
    * Cac che do: DBG_MODE_IMU / IMU_RAW / IMU_CSV / FLOW / FLOW_RAW
    *             BARO / RC / RC_RAW / ARM / MOTOR / EST / STATUS
    * Dang dat EST de xem ket qua bo loc EKF. Doi sang DBG_MODE_MOTOR de xem
    * dau ra DShot, hoac DBG_MODE_ARM de xem may trang thai arm.
    */
-  dbg_console_set_mode(DBG_MODE_STATUS); /* tong quan he thong */
+  dbg_console_set_mode(DBG_MODE_LOG); /* kiem tra blackbox */
 
   dbg_println("");
   dbg_println("=== FCH743_V1.0 khoi dong ===");
@@ -437,9 +506,16 @@ int main(void)
        * de CHOT ket qua hieu chuan. Khong co chot nay thi mot lan bam vua
        * chot hieu chuan vua QUAY DONG CO - da xay ra that, va se la tai nan
        * neu con canh quat.
+       *
+       * BO QUA CA khi dang o che do doc the qua USB. Che do do duoc chon bang
+       * cach GIU K1 luc khoi dong, nen nut van dang bi giu khi vao toi vong
+       * lap nay. Ma k1_prev khoi tao la false, nen vong dau tien se thay
+       * "suon xuong" gia va QUAY DONG CO - dung luc nguoi dung dang cam tay
+       * vao bo mach de giu nut.
        */
       if (k1 && !k1_prev && (uint32_t)(now_ms - k1_ms) > 250u &&
-          dbg_console_get_mode() != DBG_MODE_MAGCAL)
+          dbg_console_get_mode() != DBG_MODE_MAGCAL &&
+          !usb_msc_active())
       {
         k1_ms = now_ms;
 
@@ -503,11 +579,12 @@ int main(void)
     bmp388_update();             /* xu ly mau baro va phat lenh doc I2C ke tiep */
     mtf01p_update();             /* rut byte tu dem DMA UART4 va phan tich */
 #if IMU2_ENABLE
-    lsm6dsv_diag_poll();          /* tu tat khi da co mau dau tien */
+    lsm6dsv_diag_poll(); /* tu tat khi da co mau dau tien */
 #if MAG_SOURCE == MAG_SOURCE_SHUB
     lsm6dsv_mag_update(micros()); /* tu gioi han theo MAG_UPDATE_RATE_HZ */
 #endif
 #endif
+    blackbox_update(micros()); /* ghi RAM khi ARM, xa the khi DISARM */
     dbg_console_update(now_ms);
 
     /*

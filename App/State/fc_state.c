@@ -4,6 +4,7 @@
  */
 
 #include "fc_state.h"
+#include "usb_msc.h"
 #include "stm32h7xx.h"   /* chỉ cần cho __get_PRIMASK / __set_PRIMASK */
 
 /* ==========================================================================
@@ -161,6 +162,11 @@ void fc_state_update_health(uint32_t now_us)
 bool fc_state_check_arm(void)
 {
     uint32_t block = ARM_BLOCK_NONE;
+
+    /* Che do doc the qua USB thi khong bay, xet truoc moi thu khac. */
+    if (usb_msc_active()) {
+        block |= ARM_BLOCK_USB_MSC;
+    }
 
     /* Phải có tín hiệu RC hợp lệ và không đang failsafe. */
     if ((g_fc.sys.sensor_health & SENSOR_RC) == 0) {
