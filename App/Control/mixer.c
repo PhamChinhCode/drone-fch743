@@ -5,6 +5,7 @@
 
 #include "mixer.h"
 #include "fc_state.h"
+#include "param_table.h"
 
 /*
  * Bảng trộn. Mỗi hàng là một motor, ba cột là hệ số của roll, pitch, yaw.
@@ -27,21 +28,43 @@
  * nhào ngay giây đầu.
  *
  * Cột yaw: hai motor cùng đường chéo nhận cùng dấu. {M1,M3} một dấu,
- * {M2,M4} dấu ngược lại. MIX_YAW_SIGN quyết định đường chéo nào dương.
+ * {M2,M4} dấu ngược lại. mix_yaw_sign quyết định đường chéo nào dương.
+ *
+ * KHONG con `const`: cot yaw duoc dung lai tu g_params trong
+ * mixer_apply_params(). Giu bang dung san thay vi nhan dau o cho dung de
+ * vong nong khong doi mot phep nhan nao - bang nay duoc doc 4000 lan moi
+ * giay cho moi motor.
  */
-static const float s_mix[FC_MOTOR_COUNT][AXIS_COUNT] = {
-    /*         roll    pitch                    yaw            */
-    /* M1 */ { -1.0f, +1.0f, (float)(MIX_YAW_SIGN) * +1.0f },
-    /* M2 */ { +1.0f, +1.0f, (float)(MIX_YAW_SIGN) * -1.0f },
-    /* M3 */ { +1.0f, -1.0f, (float)(MIX_YAW_SIGN) * +1.0f },
-    /* M4 */ { -1.0f, -1.0f, (float)(MIX_YAW_SIGN) * -1.0f },
+static float s_mix[FC_MOTOR_COUNT][AXIS_COUNT] = {
+    /*         roll    pitch     yaw   */
+    /* M1 */ { -1.0f, +1.0f, +1.0f },
+    /* M2 */ { +1.0f, +1.0f, -1.0f },
+    /* M3 */ { +1.0f, -1.0f, +1.0f },
+    /* M4 */ { -1.0f, -1.0f, -1.0f },
 };
+
+void mixer_apply_params(void)
+{
+    /*
+     * Dau cua ca cot yaw. Cac o mang giu dang +1/-1 co dinh (quan he giua bon
+     * motor la co dinh - do la hinh hoc cua khung X), chi rieng DAU CHUNG la
+     * doi duoc, vi no phu thuoc chieu quay that cua canh quat.
+     */
+    const float sign = (g_params.mix_yaw_sign < 0) ? -1.0f : +1.0f;
+
+    s_mix[0][AXIS_YAW] = sign * +1.0f;
+    s_mix[1][AXIS_YAW] = sign * -1.0f;
+    s_mix[2][AXIS_YAW] = sign * +1.0f;
+    s_mix[3][AXIS_YAW] = sign * -1.0f;
+}
 
 static bool  s_saturated;
 static float s_scale = 1.0f;
 
 void mixer_init(void)
 {
+    mixer_apply_params();   /* dung bang tron theo mix_yaw_sign dang co */
+
     s_saturated = false;
     s_scale     = 1.0f;
 

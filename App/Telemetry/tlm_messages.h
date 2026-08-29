@@ -39,11 +39,21 @@ typedef enum {
     TLM_MSG_SYSTEM    = 0x0A,   /**< thời gian vòng lặp, tải CPU      */
     TLM_MSG_TEXT      = 0x0B,   /**< thông báo dạng chữ               */
     TLM_MSG_LINK      = 0x0C,   /**< chất lượng đường ESP-NOW         */
+    TLM_MSG_PARAM_VALUE = 0x0D, /**< mô tả + giá trị một tham số      */
+    TLM_MSG_ACK       = 0x0E,   /**< trả lời cho một lệnh uplink      */
+    TLM_MSG_FC_INFO   = 0x0F,   /**< nhận dạng mạch bay, chữ ký bảng  */
+    TLM_MSG_CLI_LINE  = 0x10,   /**< một dòng chữ trả lời lệnh CLI    */
 
     /* --- Máy tính gửi lên (uplink) --- */
     TLM_MSG_CMD_SET_RATE  = 0x40,  /**< bật/tắt và đặt chu kỳ 1 luồng */
     TLM_MSG_CMD_SET_PID   = 0x41,  /**< nạp hệ số PID                 */
     TLM_MSG_CMD_ACTION    = 0x42,  /**< hiệu chuẩn, lưu, khởi động lại */
+    TLM_MSG_CMD_PARAM_REQ_LIST = 0x43, /**< xin toàn bộ bảng tham số  */
+    TLM_MSG_CMD_PARAM_READ     = 0x44, /**< xin lại một tham số        */
+    TLM_MSG_CMD_PARAM_SET      = 0x45, /**< đặt một tham số            */
+    TLM_MSG_CMD_MOTOR_TEST     = 0x46, /**< quay thử motor (có canh chừng) */
+    TLM_MSG_CMD_CLI            = 0x47, /**< gửi một dòng lệnh CLI      */
+    TLM_MSG_CMD_FC_INFO_REQ    = 0x48, /**< xin bản tin nhận dạng      */
 
     TLM_MSG_ID_MAX = 0xFF
 } tlm_msg_id_t;
@@ -177,6 +187,114 @@ typedef struct __attribute__((packed)) {
 } tlm_link_t;                   /* 24 byte */
 
 /* ==========================================================================
+ * Phiên bản giao thức
+ *
+ * Tăng số này khi đổi bố cục hoặc ý nghĩa của BẤT KỲ struct nào ở trên. App
+ * PC so nó ngay lúc bắt tay và TỪ CHỐI kết nối nếu lệch — thà không kết nối
+ * còn hơn đọc sai offset rồi hiển thị số vô nghĩa một cách tự tin.
+ * ========================================================================== */
+#define TLM_PROTOCOL_VERSION  1u
+
+/**
+ * Độ dài tên tham số trên đường truyền. PHẢI bằng PARAM_NAME_MAX trong
+ * param_table.h — param_msg.c có _Static_assert kiểm điều đó lúc biên dịch.
+ *
+ * Nhân đôi hằng số ở đây là có chủ ý: file này được chép nguyên sang phía máy
+ * tính, mà bên đó không có param_table.h.
+ */
+#define TLM_PARAM_NAME_MAX  28
+
+/**
+ * 0x0D — mô tả đầy đủ một tham số. (50 byte)
+ *
+ * ĐÂY LÀ BẢN TIN LÀM NÊN PHẦN MỀM CẤU HÌNH: app PC không cần biên dịch sẵn
+ * danh sách tham số nào cả, nó hỏi và firmware tự khai báo tên, kiểu, giới
+ * hạn, giá trị mặc định. Nạp firmware có thêm tham số thì app hiện được ngay,
+ * không phải cập nhật theo.
+ *
+ * `count` lặp lại trong mọi gói để app dựng được thanh tiến độ ngay từ gói
+ * đầu tiên, và biết chính xác còn thiếu bao nhiêu nếu có gói rơi.
+ */
+typedef struct __attribute__((packed)) {
+    uint16_t index;
+    uint16_t count;                    /**< tổng số tham số            */
+    uint8_t  type;                     /**< param_type_t               */
+    uint8_t  flags;                    /**< PARAM_FLAG_*               */
+    char     name[TLM_PARAM_NAME_MAX]; /**< có '\0' nếu còn chỗ        */
+    float    value;
+    float    min;
+    float    max;
+    float    def;                      /**< để app tô đậm chỗ đã đổi   */
+} tlm_param_value_t;
+
+/** Mã kết quả trong TLM_MSG_ACK. */
+typedef enum {
+    TLM_ACK_OK = 0,
+    TLM_ACK_ERR_UNKNOWN,    /**< không hiểu mã lệnh                  */
+    TLM_ACK_ERR_LENGTH,     /**< payload ngắn hơn struct             */
+    TLM_ACK_ERR_RANGE,      /**< index hoặc giá trị ngoài phạm vi    */
+    TLM_ACK_ERR_ARMED,      /**< từ chối vì đang bay                 */
+    TLM_ACK_ERR_READONLY,
+    TLM_ACK_ERR_FAILED,     /**< thao tác thất bại (ví dụ ghi flash) */
+    TLM_ACK_ERR_BUSY
+} tlm_ack_result_t;
+
+/**
+ * 0x0E — trả lời cho một lệnh uplink. (4 byte)
+ *
+ * MỌI lệnh uplink đều được trả lời, kể cả khi thành công. Không có ACK thì
+ * app phải đoán bằng cách chờ hết giờ, và "lệnh bị bỏ" trông y hệt "lệnh
+ * chạy xong nhưng không đổi gì".
+ */
+typedef struct __attribute__((packed)) {
+    uint8_t  cmd_id;        /**< mã lệnh đang được trả lời           */
+    uint8_t  result;        /**< tlm_ack_result_t                    */
+    uint16_t detail;        /**< tuỳ lệnh: chỉ số tham số, mã lỗi... */
+} tlm_ack_t;
+
+/** Bit trong tlm_fc_info_t.capabilities. */
+#define TLM_CAP_PARAMS      (1u << 0)
+#define TLM_CAP_CLI         (1u << 1)
+#define TLM_CAP_MOTOR_TEST  (1u << 2)
+#define TLM_CAP_BLACKBOX    (1u << 3)
+#define TLM_CAP_IMU2        (1u << 4)
+#define TLM_CAP_MAG         (1u << 5)
+
+/**
+ * 0x0F — nhận dạng mạch bay. (32 byte)
+ *
+ * Gói đầu tiên app xin sau khi mở cổng. `protocol_version` lệch thì app từ
+ * chối kết nối; `param_table_crc` lệch so với lần trước thì app biết phải
+ * đọc lại toàn bộ bảng chứ không dùng bản đã nhớ.
+ */
+typedef struct __attribute__((packed)) {
+    char     board[16];
+    uint8_t  fw_major;
+    uint8_t  fw_minor;
+    uint8_t  fw_patch;
+    uint8_t  protocol_version;
+    uint16_t param_count;
+    uint16_t reserved;
+    uint32_t param_table_crc;
+    uint32_t capabilities;
+} tlm_fc_info_t;
+
+/** Bit trong tlm_cli_line_t.flags. */
+#define TLM_CLI_FLAG_LAST  (1u << 0)
+
+/**
+ * 0x10 — một dòng chữ trả lời lệnh CLI. Độ dài thay đổi.
+ *
+ * Cùng bộ mã sinh ra những dòng này với console chữ trên USART1, nên khi app
+ * cư xử lạ thì gõ tay đúng lệnh đó vào PuTTY là biết lỗi ở firmware hay ở app.
+ */
+typedef struct __attribute__((packed)) {
+    uint16_t seq;           /**< số thứ tự dòng trong một lần trả lời */
+    uint8_t  flags;         /**< TLM_CLI_FLAG_*                       */
+    char     text[60];      /**< không cần ký tự kết thúc chuỗi       */
+} tlm_cli_line_t;
+
+/* ==========================================================================
  * Payload — uplink (máy tính điều khiển firmware)
  * ========================================================================== */
 
@@ -209,5 +327,54 @@ typedef struct __attribute__((packed)) {
     uint8_t  action;            /**< tlm_action_t                     */
     uint32_t argument;          /**< tuỳ lệnh, thường bằng 0          */
 } tlm_cmd_action_t;
+
+/** 0x44 — xin lại một tham số (dùng khi phát hiện gói rơi). */
+typedef struct __attribute__((packed)) {
+    uint16_t index;
+} tlm_cmd_param_read_t;
+
+/**
+ * 0x45 — đặt một tham số.
+ *
+ * `type` KHÔNG thừa: nó được đối chiếu với bảng trước khi ghi. App dùng bản
+ * bảng đã nhớ từ phiên trước mà firmware đã đổi thì chỉ số sẽ trỏ sang tham
+ * số khác — kiểm kiểu bắt được phần lớn trường hợp đó trước khi ghi bừa.
+ *
+ * Firmware LUÔN trả về một TLM_MSG_PARAM_VALUE của chính tham số vừa ghi,
+ * nên app hiển thị con số firmware THỰC SỰ nhận chứ không phải con số đã gõ.
+ */
+typedef struct __attribute__((packed)) {
+    uint16_t index;
+    uint8_t  type;              /**< param_type_t, để đối chiếu       */
+    uint8_t  reserved;
+    float    value;
+} tlm_cmd_param_set_t;
+
+/**
+ * 0x46 — quay thử motor.
+ *
+ * MỘT motor mỗi lần, KHÔNG phải bitmask. Driver dshot bảo đảm "chỉ một motor
+ * quay tại một thời điểm, ba cái còn lại nhận lệnh 0" và đó là một trong bốn
+ * chốt an toàn của nó — cho phép chọn nhiều motor cùng lúc là gỡ mất chốt đó.
+ *
+ * `timeout_ms` là CANH CHỪNG: firmware tự dừng sau ngần ấy thời gian (trần
+ * cứng DSHOT_TEST_MAX_MS). App gửi lại đều đặn — khoảng 200 ms một lần với
+ * timeout 500 ms — suốt lúc người dùng còn giữ thanh trượt.
+ *
+ * Nhờ vậy rút cáp, treo app, hay mất ESP-NOW đều dẫn tới motor dừng, không
+ * cần app còn sống để dọn dẹp. Đây là điều kiện AN TOÀN, không phải tối ưu.
+ */
+typedef struct __attribute__((packed)) {
+    uint8_t  motor;             /**< 0..3; TLM_MOTOR_TEST_STOP = dừng ngay */
+    uint8_t  throttle_pct;      /**< bị kẹp bởi DSHOT_TEST_MAX_PERCENT     */
+    uint16_t timeout_ms;        /**< tự dừng sau ngần này                  */
+} tlm_cmd_motor_test_t;
+
+#define TLM_MOTOR_TEST_STOP  0xFFu
+
+/** 0x47 — một dòng lệnh CLI. Độ dài thay đổi, không cần '\0'. */
+typedef struct __attribute__((packed)) {
+    char text[60];
+} tlm_cmd_cli_t;
 
 #endif /* TLM_MESSAGES_H */

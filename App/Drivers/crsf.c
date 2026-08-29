@@ -5,6 +5,7 @@
 
 #include "crsf.h"
 #include "fc_state.h"
+#include "param_table.h"
 #include "fc_time.h"
 #include "main.h"
 
@@ -88,7 +89,7 @@ static float norm_symmetric(uint16_t raw)
                             (float)RC_CRSF_CHANNEL_MIN,
                             (float)RC_CRSF_CHANNEL_MAX,
                             -1.0f, 1.0f);
-    return fc_deadbandf(fc_constrainf(v, -1.0f, 1.0f), RC_DEADBAND_NORM);
+    return fc_deadbandf(fc_constrainf(v, -1.0f, 1.0f), g_params.rc_deadband_norm);
 }
 
 /** Cần ga: 172..1811 -> 0..1, KHÔNG có vùng chết. */
@@ -139,17 +140,17 @@ static void handle_rc_channels(const uint8_t *p, uint8_t size)
      * chỉ thấy quy ước dấu chuẩn, không module nào phải biết radio của bạn gán
      * kênh kiểu gì.
      */
-    g_fc.rc.roll  = norm_symmetric(g_fc.rc.channel_raw[RC_CHANNEL_ROLL])
-                  * (RC_INVERT_ROLL ? -1.0f : 1.0f);
-    g_fc.rc.pitch = norm_symmetric(g_fc.rc.channel_raw[RC_CHANNEL_PITCH])
-                  * (RC_INVERT_PITCH ? -1.0f : 1.0f);
-    g_fc.rc.yaw   = norm_symmetric(g_fc.rc.channel_raw[RC_CHANNEL_YAW])
-                  * (RC_INVERT_YAW ? -1.0f : 1.0f);
+    g_fc.rc.roll  = norm_symmetric(g_fc.rc.channel_raw[g_params.rc_channel_roll])
+                  * (g_params.rc_invert_roll ? -1.0f : 1.0f);
+    g_fc.rc.pitch = norm_symmetric(g_fc.rc.channel_raw[g_params.rc_channel_pitch])
+                  * (g_params.rc_invert_pitch ? -1.0f : 1.0f);
+    g_fc.rc.yaw   = norm_symmetric(g_fc.rc.channel_raw[g_params.rc_channel_yaw])
+                  * (g_params.rc_invert_yaw ? -1.0f : 1.0f);
 
     /* Ga đảo chiều bằng cách lật quanh giữa dải, vì nó là 0..1 chứ không phải -1..1. */
     {
-        const float t = norm_throttle(g_fc.rc.channel_raw[RC_CHANNEL_THROTTLE]);
-        g_fc.rc.throttle = RC_INVERT_THROTTLE ? (1.0f - t) : t;
+        const float t = norm_throttle(g_fc.rc.channel_raw[g_params.rc_channel_throttle]);
+        g_fc.rc.throttle = g_params.rc_invert_throttle ? (1.0f - t) : t;
     }
 
     const uint32_t now_us = micros();

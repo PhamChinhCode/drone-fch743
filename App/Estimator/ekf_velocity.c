@@ -4,6 +4,7 @@
  */
 
 #include "ekf_velocity.h"
+#include "param_table.h"
 #include "ekf_attitude.h"
 
 /* Một bộ lọc 2 trạng thái cho mỗi trục ngang: [vận tốc, bias gia tốc]. */
@@ -72,8 +73,8 @@ static void axis_predict(axis_kf_t *a, float accel, float dt)
         Pn[i][1] =                 FP[i][1];
     }
 
-    const float sa2 = EST_ACC_XY_NOISE_MPS2 * EST_ACC_XY_NOISE_MPS2;
-    const float sb2 = EST_ACC_XY_BIAS_WALK * EST_ACC_XY_BIAS_WALK;
+    const float sa2 = g_params.est_acc_xy_noise_mps2 * g_params.est_acc_xy_noise_mps2;
+    const float sb2 = g_params.est_acc_xy_bias_walk * g_params.est_acc_xy_bias_walk;
 
     Pn[0][0] += sa2 * dt * dt;
     Pn[1][1] += sb2 * dt;
@@ -141,7 +142,7 @@ bool ekf_velocity_update_flow(float flow_x_rad, float flow_y_rad,
     }
 
     /* Chất lượng thấp nghĩa là mặt sàn không đủ kết cấu để bám. */
-    if (quality < FLOW_QUALITY_MIN) {
+    if (quality < g_params.flow_quality_min) {
         s_rejected++;
         return false;
     }
@@ -150,14 +151,14 @@ bool ekf_velocity_update_flow(float flow_x_rad, float flow_y_rad,
      * Nghiêng nhiều thì tia laser bắn xiên nên độ cao sai, và phép chiếu vận
      * tốc từ hệ thân sang NED cũng mất chính xác. Thà bỏ còn hơn tin số sai.
      */
-    if (tilt_cos < cosf(EST_FLOW_MAX_TILT_DEG * FC_DEG_TO_RAD)) {
+    if (tilt_cos < cosf(g_params.est_flow_max_tilt_deg * FC_DEG_TO_RAD)) {
         s_rejected++;
         return false;
     }
 
     /* Độ cao thẳng đứng tới đúng mặt sàn mà flow đang nhìn. */
     const float h = range_m * tilt_cos;
-    if (h < EST_FLOW_MIN_HEIGHT_M || h > EST_FLOW_MAX_HEIGHT_M) {
+    if (h < g_params.est_flow_min_height_m || h > g_params.est_flow_max_height_m) {
         s_rejected++;
         return false;
     }
@@ -204,7 +205,7 @@ bool ekf_velocity_update_flow(float flow_x_rad, float flow_y_rad,
     const vec3f_t v_ned =
         ekf_attitude_body_to_ned((vec3f_t){ vx_body, vy_body, 0.0f });
 
-    const float r = EST_FLOW_NOISE_MPS * EST_FLOW_NOISE_MPS;
+    const float r = g_params.est_flow_noise_mps * g_params.est_flow_noise_mps;
     axis_update(&s_n, v_ned.x, r);
     axis_update(&s_e, v_ned.y, r);
 

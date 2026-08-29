@@ -5,6 +5,7 @@
 
 #include "bmp388.h"
 #include "fc_state.h"
+#include "param_table.h"
 #include "fc_time.h"
 #include "main.h"
 
@@ -17,37 +18,43 @@ extern I2C_HandleTypeDef hi2c1;
  * Chuyển tham số cấu hình thành giá trị thanh ghi
  * ========================================================================== */
 
-#if   BARO_OSR_PRESSURE == 1
-  #define BMP_OSR_P_SEL   0u
-#elif BARO_OSR_PRESSURE == 2
-  #define BMP_OSR_P_SEL   1u
-#elif BARO_OSR_PRESSURE == 4
-  #define BMP_OSR_P_SEL   2u
-#elif BARO_OSR_PRESSURE == 8
-  #define BMP_OSR_P_SEL   3u
-#elif BARO_OSR_PRESSURE == 16
-  #define BMP_OSR_P_SEL   4u
-#elif BARO_OSR_PRESSURE == 32
-  #define BMP_OSR_P_SEL   5u
-#else
-  #error "BARO_OSR_PRESSURE chi nhan 1, 2, 4, 8, 16 hoac 32"
-#endif
+/*
+ * Sieu lay mau gio la THAM SO RUNTIME nen khong con #error luc bien dich.
+ * Thay bang tra bang luc chay: chi nhan dung luy thua cua 2 tu 1 den 32, gia
+ * tri khac duoc lam tron XUONG muc hop le gan nhat.
+ *
+ * osr_index() tra ve chi so trong bang, va CHINH chi so do vua la bit thanh
+ * ghi vua la so mu de suy nguoc ra he so that (1 << i). Nho vay he so dung
+ * cho phep tinh thoi gian do o duoi luon khop voi thu da ghi xuong chip.
+ */
+#define BMP_OSR_LEVELS  6u   /* 1, 2, 4, 8, 16, 32 */
 
-#if   BARO_OSR_TEMPERATURE == 1
-  #define BMP_OSR_T_SEL   0u
-#elif BARO_OSR_TEMPERATURE == 2
-  #define BMP_OSR_T_SEL   1u
-#elif BARO_OSR_TEMPERATURE == 4
-  #define BMP_OSR_T_SEL   2u
-#elif BARO_OSR_TEMPERATURE == 8
-  #define BMP_OSR_T_SEL   3u
-#elif BARO_OSR_TEMPERATURE == 16
-  #define BMP_OSR_T_SEL   4u
-#elif BARO_OSR_TEMPERATURE == 32
-  #define BMP_OSR_T_SEL   5u
-#else
-  #error "BARO_OSR_TEMPERATURE chi nhan 1, 2, 4, 8, 16 hoac 32"
-#endif
+static uint8_t osr_index(uint8_t want)
+{
+    uint8_t idx = 0;
+
+    for (uint8_t i = 0; i < BMP_OSR_LEVELS; i++) {
+        if ((1u << i) <= want) {
+            idx = i;
+        }
+    }
+    return idx;
+}
+
+/* He so IIR hop le: 0, 1, 3, 7, 15, 31, 63, 127 - tuc (1 << i) - 1. */
+#define BMP_IIR_LEVELS  8u
+
+static uint8_t iir_index(uint8_t want)
+{
+    uint8_t idx = 0;
+
+    for (uint8_t i = 0; i < BMP_IIR_LEVELS; i++) {
+        if (((1u << i) - 1u) <= want) {
+            idx = i;
+        }
+    }
+    return idx;
+}
 
 /* ODR của chip = 200 Hz / 2^odr_sel. */
 #if   BARO_SAMPLE_RATE_HZ == 200
@@ -66,46 +73,42 @@ extern I2C_HandleTypeDef hi2c1;
   #error "BARO_SAMPLE_RATE_HZ chi nhan 200, 100, 50, 25, 12 hoac 6"
 #endif
 
-#if   BARO_IIR_COEF == 0
-  #define BMP_IIR_SEL     0u
-#elif BARO_IIR_COEF == 1
-  #define BMP_IIR_SEL     1u
-#elif BARO_IIR_COEF == 3
-  #define BMP_IIR_SEL     2u
-#elif BARO_IIR_COEF == 7
-  #define BMP_IIR_SEL     3u
-#elif BARO_IIR_COEF == 15
-  #define BMP_IIR_SEL     4u
-#elif BARO_IIR_COEF == 31
-  #define BMP_IIR_SEL     5u
-#elif BARO_IIR_COEF == 63
-  #define BMP_IIR_SEL     6u
-#elif BARO_IIR_COEF == 127
-  #define BMP_IIR_SEL     7u
-#else
-  #error "BARO_IIR_COEF chi nhan 0, 1, 3, 7, 15, 31, 63 hoac 127"
-#endif
-
-/*
- * Kiểm tra ngay lúc biên dịch rằng thời gian đo lọt trong chu kỳ ODR.
- * Công thức datasheet mục 3.9.2 (đơn vị µs):
- *   t_meas = 234 + (392 + osr_p * 2020) + (163 + osr_t * 2020)
- */
-#define BMP_MEAS_TIME_US   (234u + (392u + BARO_OSR_PRESSURE * 2020u) \
-                                 + (163u + BARO_OSR_TEMPERATURE * 2020u))
 #define BMP_ODR_PERIOD_US  (1000000u / BARO_SAMPLE_RATE_HZ)
 
-#if BMP_MEAS_TIME_US >= BMP_ODR_PERIOD_US
-  #error "Thoi gian do vuot chu ky ODR: giam BARO_OSR_* hoac ha BARO_SAMPLE_RATE_HZ"
-#endif
+/*
+ * Thoi gian do PHAI lot trong chu ky ODR, cong thuc datasheet muc 3.9.2 (us):
+ *   t_meas = 234 + (392 + osr_p * 2020) + (163 + osr_t * 2020)
+ *
+ * Truoc day day la #error luc bien dich. Gio osr la tham so runtime nen phep
+ * kiem chuyen sang luc chay - va no VAN PHAI CO: vuot chu ky thi chip bat bit
+ * conf_err va lang le bo mau, bieu hien ra ngoai chi la "baro thinh thoang
+ * chet" chu khong bao gi.
+ *
+ * Khong hop le thi HA osr_p cho toi khi vua - ha do phan giai con hon mat han
+ * nguon do do cao.
+ */
+static uint8_t fit_osr_pressure(uint8_t osr_p_idx, uint8_t osr_t_idx)
+{
+    while (osr_p_idx > 0u) {
+        const uint32_t t_meas = 234u
+                              + (392u + (1u << osr_p_idx) * 2020u)
+                              + (163u + (1u << osr_t_idx) * 2020u);
+
+        if (t_meas < BMP_ODR_PERIOD_US) {
+            break;
+        }
+        osr_p_idx--;
+    }
+    return osr_p_idx;
+}
 
 /* PWR_CTRL: bật đo áp suất + nhiệt độ, chế độ NORMAL (đo liên tục). */
 #define BMP_PWR_CTRL_NORMAL   0x33u
 #define BMP_PWR_CTRL_SLEEP    0x00u
 
-#define BMP_OSR_VALUE      (uint8_t)((BMP_OSR_T_SEL << 3) | BMP_OSR_P_SEL)
+/* Dung trong bmp388_init(), sau khi da chot chi so osr. */
 #define BMP_ODR_VALUE      (uint8_t)(BMP_ODR_SEL)
-#define BMP_CONFIG_VALUE   (uint8_t)(BMP_IIR_SEL << 1)
+
 
 /*
  * IF_CONF: bật bộ canh giờ (watchdog) của giao diện I2C với ngưỡng 40 ms.
@@ -347,7 +350,8 @@ bool bmp388_init(void)
     g_fc.baro.calibrated = false;
 
     /* Hệ số lọc tính sẵn theo ODR danh định, tránh chia trong đường dữ liệu. */
-    s_alt_alpha = fc_lpf_alpha(BARO_ALT_LPF_HZ, 1.0f / (float)BARO_SAMPLE_RATE_HZ);
+    s_alt_alpha = fc_lpf_alpha(g_params.baro_alt_lpf_hz,
+                               1.0f / (float)BARO_SAMPLE_RATE_HZ);
 
     /* Chip cần tối đa 2 ms kể từ lúc có nguồn mới trả lời được. */
     HAL_Delay(5);
@@ -401,16 +405,40 @@ bool bmp388_init(void)
     }
 
     /*
-     * --- Cấu hình đo ---
-     * Ghi hết thông số trước, bật chế độ NORMAL sau cùng. Đổi OSR/ODR khi
-     * chip đang đo sẽ làm chip bỏ dở mẫu hiện tại và bật cờ conf_err.
+     * --- Cau hinh do ---
+     * Ghi het thong so truoc, bat che do NORMAL sau cung. Doi OSR/ODR khi
+     * chip dang do se lam chip bo do mau hien tai va bat co conf_err.
+     *
+     * Ba gia tri duoi day tinh TU g_params luc chay (truoc kia la hang so
+     * bien dich). fit_osr_pressure() ha osr_p neu bo tham so nguoi dung chon
+     * lam thoi gian do vuot chu ky ODR - ha do phan giai con hon de chip bat
+     * conf_err roi lang le bo mau.
      */
+    const uint8_t osr_p_want = osr_index(g_params.baro_osr_pressure);
+    const uint8_t osr_t_idx  = osr_index(g_params.baro_osr_temperature);
+    const uint8_t osr_p_idx  = fit_osr_pressure(osr_p_want, osr_t_idx);
+
+    const uint8_t osr_value    = (uint8_t)((osr_t_idx << 3) | osr_p_idx);
+    const uint8_t config_value = (uint8_t)(iir_index(g_params.baro_iir_coef) << 1);
+
+    if (osr_p_idx != osr_p_want) {
+        /*
+         * Da phai ha xuong. Ghi nguoc vao tham so de `get baro_osr_pressure`
+         * in ra con so DANG CHAY chu khong phai con so da bi bo qua - khong
+         * co dong nay thi bang tham so noi doi mot cach im lang.
+         */
+        const uint16_t idx = param_find("baro_osr_pressure");
+        if (idx != PARAM_INDEX_NONE) {
+            (void)param_set_f32(idx, (float)(1u << osr_p_idx));
+        }
+    }
+
     if (!reg_write_verify(BMP388_REG_PWR_CTRL,  BMP_PWR_CTRL_SLEEP)    ||
         !reg_write_verify(BMP388_REG_IF_CONF,   BMP_IF_CONF_VALUE)     ||
         !reg_write_verify(BMP388_REG_INT_CTRL,  BMP_INT_CTRL_VALUE)    ||
-        !reg_write_verify(BMP388_REG_OSR,       BMP_OSR_VALUE)         ||
+        !reg_write_verify(BMP388_REG_OSR,       osr_value)             ||
         !reg_write_verify(BMP388_REG_ODR,       BMP_ODR_VALUE)         ||
-        !reg_write_verify(BMP388_REG_CONFIG,    BMP_CONFIG_VALUE)      ||
+        !reg_write_verify(BMP388_REG_CONFIG,    config_value)          ||
         !reg_write_verify(BMP388_REG_PWR_CTRL,  BMP_PWR_CTRL_NORMAL)) {
         goto fail;
     }
@@ -477,7 +505,7 @@ static bool process_sample(void)
 
     g_fc.baro.temperature_c = temp_c;
     g_fc.baro.pressure_pa   = press_pa;
-    g_fc.baro.altitude_m    = pressure_to_altitude_m(press_pa, BARO_SEA_LEVEL_PA);
+    g_fc.baro.altitude_m    = pressure_to_altitude_m(press_pa, g_params.baro_sea_level_pa);
 
     if (s_state == BMP_STATE_CALIBRATING) {
         s_ground.sum_pa += (double)press_pa;
@@ -486,7 +514,7 @@ static bool process_sample(void)
         /* Chưa có mốc thì độ cao tương đối chưa có nghĩa. */
         g_fc.baro.altitude_rel_m = 0.0f;
 
-        if (s_ground.count >= BARO_CALIB_SAMPLE_COUNT) {
+        if (s_ground.count >= g_params.baro_calib_sample_count) {
             g_fc.baro.ground_pressure_pa =
                 (float)(s_ground.sum_pa / (double)s_ground.count);
             g_fc.baro.calibrated = true;
@@ -630,7 +658,7 @@ uint8_t bmp388_calibration_progress(void)
     if (s_state != BMP_STATE_CALIBRATING) {
         return g_fc.baro.calibrated ? 100u : 0u;
     }
-    return (uint8_t)((s_ground.count * 100u) / BARO_CALIB_SAMPLE_COUNT);
+    return (uint8_t)((s_ground.count * 100u) / g_params.baro_calib_sample_count);
 }
 
 uint8_t  bmp388_chip_id(void)     { return s_chip_id; }

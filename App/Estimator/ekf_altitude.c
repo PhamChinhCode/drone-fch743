@@ -4,6 +4,7 @@
  */
 
 #include "ekf_altitude.h"
+#include "param_table.h"
 
 /* Chỉ số trạng thái, đặt tên cho dễ đọc phần đại số bên dưới. */
 enum { ST_H = 0, ST_V = 1, ST_B = 2, ST_N = 3 };
@@ -79,8 +80,8 @@ void ekf_altitude_predict(float accel_up_mps2, float dt)
      * tương quan với nhau (cùng một nguồn), nên các số hạng chéo Q[0][1]
      * KHÔNG được bỏ — bỏ đi thì bộ lọc tự tin quá mức vào độ cao.
      */
-    const float sa2 = EST_ACC_Z_NOISE_MPS2 * EST_ACC_Z_NOISE_MPS2;
-    const float sb2 = EST_ACC_Z_BIAS_WALK * EST_ACC_Z_BIAS_WALK;
+    const float sa2 = g_params.est_acc_z_noise_mps2 * g_params.est_acc_z_noise_mps2;
+    const float sb2 = g_params.est_acc_z_bias_walk * g_params.est_acc_z_bias_walk;
 
     Pn[0][0] += sa2 * dt2 * dt2 * 0.25f;
     Pn[0][1] += sa2 * dt2 * dt * 0.5f;
@@ -154,7 +155,7 @@ static void update_height(float z, float r)
 
 void ekf_altitude_update_baro(float altitude_m)
 {
-    update_height(altitude_m, EST_BARO_NOISE_M * EST_BARO_NOISE_M);
+    update_height(altitude_m, g_params.est_baro_noise_m * g_params.est_baro_noise_m);
 }
 
 bool ekf_altitude_update_range(float range_m, float tilt_cos)
@@ -164,19 +165,19 @@ bool ekf_altitude_update_range(float range_m, float tilt_cos)
      * ngay dưới bụng — chiếu hình học không cứu được vì mặt đất bên đó có
      * thể cao thấp khác. Thà bỏ hẳn số đo còn hơn tin một con số sai.
      */
-    const float min_cos = cosf(EST_RANGE_MAX_TILT_DEG * FC_DEG_TO_RAD);
+    const float min_cos = cosf(g_params.est_range_max_tilt_deg * FC_DEG_TO_RAD);
     if (tilt_cos < min_cos) {
         return false;
     }
 
-    if (range_m <= 0.0f || range_m > EST_RANGE_MAX_M) {
+    if (range_m <= 0.0f || range_m > g_params.est_range_max_m) {
         return false;
     }
 
     /* Chiếu khoảng cách nghiêng xuống phương thẳng đứng. */
     const float height = range_m * tilt_cos;
 
-    update_height(height, EST_RANGE_NOISE_M * EST_RANGE_NOISE_M);
+    update_height(height, g_params.est_range_noise_m * g_params.est_range_noise_m);
     return true;
 }
 

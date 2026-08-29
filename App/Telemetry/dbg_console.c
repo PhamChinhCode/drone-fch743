@@ -15,6 +15,7 @@
 #include "arming.h"
 #include "ctrl_angle.h"
 #include "ctrl_poshold.h"
+#include "ctrl_althold.h"
 #include "ctrl_rate.h"
 #include "mixer.h"
 #include "estimator.h"
@@ -139,6 +140,11 @@ void dbg_console_tx_complete_isr(void)
     s_inflight = 0;
     s_busy     = false;
     tx_kick();
+}
+
+uint16_t dbg_console_tx_free(void)
+{
+    return tx_free();
 }
 
 uint32_t dbg_console_dropped(void)
@@ -653,7 +659,10 @@ static void emit_header(void)
         wr_str(&w, "     wx      gx   tong |     wy      gy   tong |  vb_x   vb_y | range_m | qual |  bo");
         break;
     case DBG_MODE_POSHOLD:
-        wr_str(&w, "  v_fwd  v_rgt |  t_fwd  t_rgt |   I_x   I_y |  tgt_r  tgt_p |   range | che do");
+        wr_str(&w, "  v_fwd  v_rgt |  t_fwd  t_rgt |   I_x   I_y |     dN     dE | giu |  tgt_r  tgt_p | che do");
+        break;
+    case DBG_MODE_ALTHOLD:
+        wr_str(&w, "    alt    moc |  climb  c_tgt |     thr   I_thr |  valid | che do");
         break;
     case DBG_MODE_ANGLE:
         wr_str(&w, "  tgt_r  ang_r |  tgt_p  ang_p |   sp_r   gy_r |   sp_p   gy_p |   ch6 | che do");
@@ -662,7 +671,7 @@ static void emit_header(void)
         wr_str(&w, "   sp_r   gy_r |   sp_p   gy_p |   sp_y   gy_y |    o_r    o_p    o_y |    I_r    I_p    I_y | sat |     hz");
         break;
     case DBG_MODE_EST:
-        wr_str(&w, "   roll  pitch    yaw |    alt   climb |  bias_z |   bgx   bgy   bgz | sig_deg | sig_m |  baro | range |  rej");
+        wr_str(&w, "    roll   pitch     yaw |     d_yaw    do/ph |    alt   climb |  bias_z |   bgx   bgy   bgz | sig_deg | sig_m |  baro | range |  rej");
         break;
     case DBG_MODE_MOTOR:
         wr_str(&w, "armed |    m1    m2    m3    m4 |   out1   out2   out3   out4 |    frames | skip |  err | code");
@@ -1143,6 +1152,111 @@ static void emit_motor(void)
  * PHEP THU NHANH: de yen may bay -> roll/pitch quanh 0, climb quanh 0,
  * sig_deg tut xuong duoi 1. Nghieng 30 do sang phai -> roll ~ +30.
  */
+/* ==========================================================================
+ * Đo trôi yaw so với một mốc
+ *
+ * VÌ SAO PHẢI TÍCH LUỸ CHỨ KHÔNG TRỪ HAI GÓC
+ *
+ *   Yaw do atan2 sinh ra nên luôn nằm trong ±180°. Trừ thẳng góc hiện tại cho
+ *   góc mốc thì trôi quá nửa vòng sẽ đọc ra số ÂM nhỏ dần thay vì số dương
+ *   lớn dần — đúng lúc con số bắt đầu có ý nghĩa thì nó lại nói dối.
+ *
+ *   Nên ở đây cộng dồn từng bước nhỏ, mỗi bước tự gỡ gói qua mốc ±180°. Trôi
+ *   ba vòng thì đọc ra 1080°, không phải 0°.
+ *
+ * NẰM Ở TẦNG CONSOLE, KHÔNG PHẢI TẦNG ĐIỀU KHIỂN
+ *
+ *   Đây là dụng cụ đo. Nó không được thêm một dòng nào vào vòng 1 kHz hay
+ *   4 kHz — chạy ở nhịp console 50 Hz là quá đủ, vì trôi là hiện tượng chậm.
+ *
+ *   50 Hz vẫn gỡ gói đúng cho tới 9000 °/s, xa hơn mọi thứ máy bay này làm được.
+ * ========================================================================== */
+
+static float    s_yaw_prev_rad;
+static float    s_yaw_drift_rad;   /* cộng dồn, KHÔNG gói về ±180 */
+static uint32_t s_yaw_ref_ms;
+static bool     s_yaw_ref_set;
+
+/*
+ * Mốc phụ cho phép đo TỐC ĐỘ, tách khỏi mốc tổng.
+ *
+ * VÌ SAO KHÔNG LẤY TỔNG CHIA THỜI GIAN: một cú nhảy một lần — bộ lọc đang hội
+ * tụ, va chạm vào giá, hay đơn giản là mấy dòng cũ còn trong đệm phát — sẽ
+ * nằm mãi trong tử số và bóp méo con số cho tới hết phiên đo. Đã gặp thật:
+ * tổng phẳng lì suốt hai phút mà cột tốc độ vẫn đọc −8,8 độ/phút chỉ vì 18 độ
+ * nhảy trong bốn giây đầu.
+ *
+ * Cửa sổ trượt chỉ nhìn quãng gần đây nên nó QUÊN được, và đó chính là điều
+ * cần: câu hỏi là "bây giờ đang trôi bao nhanh", không phải "từ đầu tới giờ
+ * đã đi bao xa".
+ */
+#define YAW_RATE_WINDOW_MS 20000u
+
+static float    s_yaw_win_drift_rad;   /* giá trị cộng dồn tại đầu cửa sổ */
+static uint32_t s_yaw_win_ms;
+static float    s_yaw_rate_dpm;        /* kết quả của cửa sổ vừa đóng     */
+
+static void yaw_drift_track(uint32_t now_ms)
+{
+    const float yaw = g_fc.est.attitude_rad.yaw;
+
+    if (!s_yaw_ref_set) {
+        s_yaw_prev_rad      = yaw;
+        s_yaw_drift_rad     = 0.0f;
+        s_yaw_ref_ms        = now_ms;
+        s_yaw_win_drift_rad = 0.0f;
+        s_yaw_win_ms        = now_ms;
+        s_yaw_rate_dpm      = 0.0f;
+        s_yaw_ref_set       = true;
+        return;
+    }
+
+    float d = yaw - s_yaw_prev_rad;
+
+    while (d >  FC_PI) { d -= 2.0f * FC_PI; }
+    while (d < -FC_PI) { d += 2.0f * FC_PI; }
+
+    s_yaw_prev_rad   = yaw;
+    s_yaw_drift_rad += d;
+
+    /* Đóng cửa sổ: chốt tốc độ rồi mở cửa sổ mới từ đây. */
+    const uint32_t win_ms = now_ms - s_yaw_win_ms;
+
+    if (win_ms >= YAW_RATE_WINDOW_MS) {
+        s_yaw_rate_dpm = (s_yaw_drift_rad - s_yaw_win_drift_rad)
+                         * FC_RAD_TO_DEG * 60000.0f / (float)win_ms;
+
+        s_yaw_win_drift_rad = s_yaw_drift_rad;
+        s_yaw_win_ms        = now_ms;
+    }
+}
+
+void dbg_console_yaw_zero(void)
+{
+    s_yaw_ref_set = false;   /* nhịp kế tiếp sẽ chốt lại mốc */
+}
+
+float dbg_console_yaw_drift_deg(void)
+{
+    return s_yaw_drift_rad * FC_RAD_TO_DEG;
+}
+
+uint32_t dbg_console_yaw_elapsed_ms(void)
+{
+    return s_yaw_ref_set ? (uint32_t)(HAL_GetTick() - s_yaw_ref_ms) : 0u;
+}
+
+/**
+ * Tốc độ trôi trên cửa sổ 20 giây gần nhất, độ/phút.
+ *
+ * Trả 0 cho tới khi cửa sổ đầu tiên đóng — thà không có số còn hơn có một số
+ * sai. Sau đó nó cập nhật mỗi 20 giây.
+ */
+float dbg_console_yaw_drift_dpm(void)
+{
+    return s_yaw_rate_dpm;
+}
+
 static void emit_est(void)
 {
     char line[DBG_LINE_MAX];
@@ -1151,9 +1265,25 @@ static void emit_est(void)
     const estimator_data_t *e = &g_fc.est;
     const vec3f_t bg = ekf_attitude_gyro_bias_dps();
 
-    wr_fix(&w, e->attitude_rad.roll  * FC_RAD_TO_DEG, 2, 7);
-    wr_fix(&w, e->attitude_rad.pitch * FC_RAD_TO_DEG, 2, 7);
-    wr_fix(&w, e->attitude_rad.yaw   * FC_RAD_TO_DEG, 2, 7);
+    /*
+     * Bề rộng 8 chứ không phải 7.
+     *
+     * Roll và yaw chạy tới ±180, nên "-179.99" chiếm đúng 7 ký tự và KHÔNG
+     * còn chỗ cho khoảng trắng phân cách — hai cột dính liền thành
+     * "-0.31-141.85". Đã gặp thật khi phân tích log: mọi công cụ tách cột
+     * theo khoảng trắng đều đọc sai từ chỗ đó trở đi.
+     *
+     * d_yaw còn rộng hơn vì nó cộng dồn không giới hạn: trôi ba vòng là
+     * "-1080.00", chín ký tự.
+     */
+    wr_fix(&w, e->attitude_rad.roll  * FC_RAD_TO_DEG, 2, 8);
+    wr_fix(&w, e->attitude_rad.pitch * FC_RAD_TO_DEG, 2, 8);
+    wr_fix(&w, e->attitude_rad.yaw   * FC_RAD_TO_DEG, 2, 8);
+    wr_str(&w, " |");
+
+    /* Trôi yaw so với mốc, và quy ra độ/phút. Xoá mốc bằng lệnh CLI `yawzero`. */
+    wr_fix(&w, dbg_console_yaw_drift_deg(), 2, 10);
+    wr_fix(&w, dbg_console_yaw_drift_dpm(), 2, 9);
     wr_str(&w, " |");
     wr_fix(&w, e->altitude_m, 2, 7);
     wr_fix(&w, e->climb_rate_mps, 2, 8);
@@ -1334,6 +1464,32 @@ static void emit_vel(void)
  * CHINH: v bam duoc t la dat. v vot qua roi lac -> giam POSHOLD_VEL_KP.
  * v ve gan 0 nhung van troi cham deu -> tang POSHOLD_VEL_KI.
  */
+static void emit_althold(void)
+{
+    char line[DBG_LINE_MAX];
+    wr_t w = { line, 0, sizeof(line) };
+
+    wr_fix(&w, g_fc.est.altitude_m,        2, 7);
+    wr_fix(&w, ctrl_althold_target_m(),    2, 7);
+    wr_str(&w, " |");
+    wr_fix(&w, g_fc.est.climb_rate_mps,    2, 7);
+    wr_fix(&w, ctrl_althold_climb_target(),2, 7);
+    wr_str(&w, " |");
+    wr_fix(&w, g_fc.ctrl.throttle_cmd,     3, 8);
+    wr_fix(&w, ctrl_althold_integral(),    3, 8);
+    wr_str(&w, " |");
+    wr_str_pad(&w, g_fc.est.altitude_valid ? "co" : "KHONG", 7);
+    wr_str(&w, " | ");
+    wr_str(&w, fc_flight_mode_name(ctrl_angle_active_mode()));
+
+    if (ctrl_angle_fallback()) {
+        wr_str(&w, " [DU PHONG]");
+    }
+
+    wr_eol(&w);
+    (void)tx_push(line, w.len);
+}
+
 static void emit_poshold(void)
 {
     char line[DBG_LINE_MAX];
@@ -1352,10 +1508,19 @@ static void emit_poshold(void)
     wr_fix(&w, i.x, 2, 6);
     wr_fix(&w, i.y, 2, 6);
     wr_str(&w, " |");
+
+    /* Sai số vị trí: còn cách mốc đang giữ bao xa, theo hệ NED. */
+    {
+        const vec3f_t tgt = ctrl_poshold_target_ned();
+
+        wr_fix(&w, tgt.x - g_fc.est.position_m.x, 2, 7);
+        wr_fix(&w, tgt.y - g_fc.est.position_m.y, 2, 7);
+        wr_str(&w, " |");
+        wr_str_pad(&w, ctrl_poshold_position_locked() ? " co" : " --", 4);
+    }
+    wr_str(&w, " |");
     wr_fix(&w, g_fc.ctrl.setpoint_angle_rad.roll * FC_RAD_TO_DEG, 2, 7);
     wr_fix(&w, g_fc.ctrl.setpoint_angle_rad.pitch * FC_RAD_TO_DEG, 2, 7);
-    wr_str(&w, " |");
-    wr_fix(&w, (float)g_fc.flow.range_mm * 0.001f, 3, 8);
     wr_str(&w, " | ");
     wr_str(&w, fc_flight_mode_name(ctrl_angle_active_mode()));
 
@@ -2211,6 +2376,8 @@ void dbg_console_update(uint32_t now_ms)
     }
     s_next_ms = now_ms + s_period_ms;
 
+    yaw_drift_track(now_ms);
+
     /* In lại tiêu đề cột theo chu kỳ cho dễ đọc khi màn hình đã cuộn. */
     if (s_line_count == 0u) {
         emit_header();
@@ -2231,6 +2398,7 @@ void dbg_console_update(uint32_t now_ms)
     case DBG_MODE_FLOWCAL:  emit_flowcal(); break;
     case DBG_MODE_VEL:      emit_vel();     break;
     case DBG_MODE_POSHOLD:  emit_poshold(); break;
+    case DBG_MODE_ALTHOLD:  emit_althold(); break;
     case DBG_MODE_ANGLE:    emit_angle();   break;
     case DBG_MODE_PID:      emit_pid();     break;
     case DBG_MODE_EST:      emit_est();     break;

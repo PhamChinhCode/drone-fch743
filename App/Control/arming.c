@@ -5,6 +5,7 @@
 
 #include "arming.h"
 #include "fc_state.h"
+#include "param_table.h"
 #include "fc_time.h"
 
 /* ==========================================================================
@@ -34,16 +35,16 @@ static uint32_t s_disarm_count;
  */
 static bool read_switch_raw(bool previous)
 {
-    const uint16_t raw = g_fc.rc.channel_raw[ARM_SWITCH_CHANNEL];
+    const uint16_t raw = g_fc.rc.channel_raw[g_params.arm_switch_channel];
 
-    if (raw >= ARM_SWITCH_ON_THRESHOLD)  { return true;  }
-    if (raw <= ARM_SWITCH_OFF_THRESHOLD) { return false; }
+    if (raw >= g_params.arm_switch_on_threshold)  { return true;  }
+    if (raw <= g_params.arm_switch_off_threshold) { return false; }
     return previous;
 }
 
 /**
  * Lọc nhiễu công tắc: giá trị mới chỉ được công nhận sau khi giữ nguyên đủ
- * ARM_HOLD_TIME_MS. Chạy mọi vòng lặp, kể cả lúc mất sóng, để trạng thái
+ * arm_hold_time_ms. Chạy mọi vòng lặp, kể cả lúc mất sóng, để trạng thái
  * công tắc luôn bám sát dữ liệu mới nhất.
  */
 static void debounce_switch(uint32_t now_ms)
@@ -57,7 +58,7 @@ static void debounce_switch(uint32_t now_ms)
     }
 
     if (raw != s_switch_stable &&
-        fc_elapsed_ms(now_ms, s_switch_change_ms) >= ARM_HOLD_TIME_MS) {
+        fc_elapsed_ms(now_ms, s_switch_change_ms) >= g_params.arm_hold_time_ms) {
         s_switch_stable = raw;
     }
 }

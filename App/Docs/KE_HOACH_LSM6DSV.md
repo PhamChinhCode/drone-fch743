@@ -1611,3 +1611,259 @@ lệnh `STM32_Programmer_CLI ... mode=UR` để lại lõi ở trạng thái hal
 
 Đọc `CFSR`/`HFSR` (0xE000ED28) cũng đáng làm sớm: `CFSR = 0` loại ngay giả
 thuyết hard fault, đỡ mất công đi tìm sai hướng.
+
+---
+
+## Giữ độ cao và giữ vị trí — 28/08/2026
+
+### Trạng thái trước khi làm
+
+`throttle_cmd` được ghi đúng **một chỗ** trong toàn bộ chuỗi điều khiển:
+`ctrl_angle.c` lấy thẳng từ cần, ở mọi chế độ kể cả POSHOLD. Và POSHOLD giữ
+**vận tốc** chứ không giữ **vị trí** — sai số vận tốc dù nhỏ vẫn tích luỹ
+thành trôi, không có gì kéo máy bay về chỗ cũ.
+
+`FLIGHT_MODE_ALTHOLD` đã có trong enum và có tên, nhưng không ai chọn và không
+ai cài đặt. `position_m.x/.y` chưa từng được ghi, `position_valid` đặt cứng
+`false`.
+
+### Đã làm
+
+**Giữ độ cao** — `App/Control/ctrl_althold.c/.h`, hai vòng lồng nhau giống hệt
+cấu trúc vòng tư thế:
+
+```
+cần ga ──> tốc độ lên mong muốn ──> PID ──> ga
+                 ▲                            │
+       (P trên sai số độ cao)                 │
+                 └── độ cao, tốc độ lên ──────┘
+```
+
+Điểm đáng chú ý trong thiết kế:
+
+- **Ga treo là số hạng nuôi tiến.** Không có nó thì tích phân phải tự dựng
+  toàn bộ lực nâng, mất vài giây — trong đó máy bay rơi.
+- **Chuyển vào mượt.** Lúc vào chế độ, tích phân được nạp sao cho đầu ra bằng
+  ĐÚNG mức ga người lái đang giữ. Thiếu bước này thì đầu ra nhảy về ga treo
+  mặc định ngay khoảnh khắc gạt công tắc.
+- **Mốc độ cao bám theo khi đang đẩy cần.** Không bám thì lên cao 5 m rồi thả
+  tay là máy bay lao ngược về chỗ cũ.
+- **D lấy trên số đo, lọc 10 Hz.** Tốc độ lên suy từ baro nên vốn chậm và ồn.
+- **Sàn ga khác 0** (0,10). Để 0 thì một lần ước lượng độ cao sai có thể cắt
+  hẳn motor giữa không trung.
+
+**Giữ vị trí** — thêm vòng ngoài cùng vào `ctrl_poshold.c`:
+
+```
+vị trí ──> vận tốc ──> góc nghiêng ──> tốc độ góc ──> motor
+```
+
+`estimator.c` giờ tích phân vận tốc thành `position_m.x/.y`. Ý nghĩa của
+`position_valid` được định nghĩa rõ: **"dùng được để giữ chỗ trong thời gian
+ngắn"**, KHÔNG phải "biết mình đang ở đâu" — đây là dẫn đường suy tính thuần
+tuý, sai số không bao giờ tự hết, tuyệt đối không dùng để bay về nhà.
+
+Buông cần thì chốt mốc; cầm lái thì mốc bám theo chỗ hiện tại.
+
+**POSHOLD nay bao gồm giữ độ cao.** Giữ được vị trí ngang mà độ cao vẫn phải
+rà tay thì mới xong một nửa việc.
+
+### 🔴 Một lỗi an toàn tìm thấy trong lúc làm
+
+`ctrl_poshold_reset()` chỉ được gọi khi ĐỔI chế độ, không gọi khi disarm.
+Nhưng `ctrl_angle_update()` chạy bất kể đã arm hay chưa.
+
+Hậu quả đo được: máy bay nằm trên bàn ở chế độ POSHOLD, tích phân vận tốc dồn
+tới **I_y = −0,98 độ** chỉ sau ít phút, trần là ±8 độ. Arm lúc đó là máy bay
+nghiêng ngay theo một lệnh tích cóp từ khi còn nằm im.
+
+`ctrl_rate.c` đã có chốt này từ đầu, `ctrl_althold.c` mới viết cũng có — riêng
+poshold thiếu. Đã thêm. Đo lại: `I_x`/`I_y` giữ nguyên 0 sau hơn 12 giây.
+
+### Tham số mới (13)
+
+12 cho ALTHOLD, 1 cho vòng vị trí (`poshold_pos_kp`). `PARAM_SCHEMA_VERSION`
+lên 3. Đã kiểm bằng lệnh `diff`: không tham số nào đang khác mặc định nên
+việc đổi bảng **không làm mất cấu hình nào**.
+
+Nấc công tắc ALTHOLD riêng **mặc định TẮT** (`rc_mode_althold_threshold = 2000`,
+ngoài dải CRSF): công tắc ba nấc đã dùng hết chỗ, mà POSHOLD đã bao gồm giữ
+độ cao rồi.
+
+### Đã kiểm trên bàn
+
+| | |
+|---|---|
+| `mode 25` (ALTHOLD) | `alt = 0,19`, `valid = co`, mốc/tích phân = 0 khi chưa arm ✓ |
+| `mode 13` (POSHOLD) | cột `dN`/`dE`/`giu` chạy; vòng ngoài sinh lệnh vận tốc để bò về mốc ✓ |
+| CLI | `get poshold_pos_kp` → 1, `get althold_hover_thr` → 0,35 ✓ |
+
+### CÒN PHẢI LÀM TRƯỚC KHI BAY
+
+1. **Đo `althold_hover_thr` trên chính máy bay này.** Treo ở chế độ ANGLE, đọc
+   cột `thr`. ĐỪNG đoán — sai 10 % là tích phân phải bù 10 %, mất vài giây.
+2. Chỉnh theo đúng thứ tự: `althold_climb_kp` → `_ki` → `althold_alt_kp` →
+   `poshold_pos_kp`. Vòng ngoài chỉnh sau cùng và giữ thấp.
+3. **Thẻ SD đang tắt** (`FC_SD_ENABLE = 0`) nên chưa ghi blackbox được — mà
+   chỉnh hai vòng này thì rất cần log. Nên xử lý thẻ trước.
+4. Theo dõi `loop_overruns`: đang là 993/giây với `loop_max_us = 240`. Vòng
+   giữ độ cao chạy ở nhịp 1 kHz cùng vòng góc nên có thêm tải.
+
+---
+
+## Trôi yaw: bộ lọc tự chế ra 99,7 % lượng trôi — 28/08/2026
+
+### Triệu chứng
+
+Máy bay giữ cố định trên giá, roll và pitch đứng yên, nhưng yaw trôi tới
+**180 độ mỗi phút**. Con số báo về giữa các lần thử lại khác nhau: 180, rồi
+9,45, rồi 218.
+
+### Chuỗi đo dẫn tới nguyên nhân
+
+| Đại lượng | Đo được | Quy ra độ/phút |
+|---|---|---|
+| Con quay thật `gz`, 508 mẫu, đã trừ bias driver | +0,011 °/s | **+0,7** |
+| Bias yaw EKF **tự ước lượng** `bgz` | 3,610 °/s | **−216,6** |
+| Trôi yaw quan sát, 2262 mẫu / 49 s | | **−218,2** |
+
+Hai dòng cuối lệch nhau **0,7 %**. Cảm biến đóng góp 0,3 %; phần còn lại do
+bộ lọc tự tạo ra.
+
+Phép đo lặp lại hai mươi phút sau cho `bgz = 0,12` và trôi 9,45 độ/phút —
+**vẫn đúng tỉ lệ trôi ≈ bgz × 60**. Chính sự thất thường đó là chữ ký của một
+bước ngẫu nhiên không bị ràng buộc, và là lý do các lần đo trước không khớp
+nhau.
+
+### Nguyên nhân
+
+Gia tốc kế đo hướng trọng lực. Xoay quanh trục thẳng đứng **không làm đổi
+hướng trọng lực**, nên phép đo này không mang một chút thông tin nào về yaw —
+ma trận H hạng 2, nhân không gian nằm đúng dọc trục yaw.
+
+Trạng thái bias yaw vì thế **không quan sát được**. Nó chỉ nhúc nhích qua hiệp
+phương sai chéo với sai số góc, và thứ đẩy nó khi máy bay nằm im chính là
+nhiễu của gia tốc kế. Một bước ngẫu nhiên không có lực kéo về.
+
+Rồi `ekf_attitude.c` trừ thẳng nó khỏi con quay:
+
+```c
+gyro_dps.z * FC_DEG_TO_RAD - s_bias.z
+```
+
+Cái chặn duy nhất là `EST_GYRO_BIAS_MAX_DPS = 10.0` — rộng hơn bias thật
+**900 lần**, nên nó chưa bao giờ chạm tới.
+
+### Cách chữa
+
+Đóng băng trạng thái bias yaw. Ba chỗ, đều trong `ekf_attitude.c`:
+
+1. **Không bơm nhiễu quá trình** vào `P[5][5]` — bơm nhiễu vào một trạng thái
+   không phép đo nào chạm tới nghĩa là bảo bộ lọc "ta ngày càng không biết nó
+   bằng bao nhiêu", và độ lợi Kalman phình theo.
+2. **Không áp dụng `dx[5]`**.
+3. **Xoá hàng và cột 5 của ma trận hiệp phương sai.** Chỉ bỏ qua `dx[5]` là
+   chưa đủ: các số hạng chéo `P[5][k]` vẫn để trạng thái đó bóp méo phép cập
+   nhật của những trạng thái khác.
+
+Roll và pitch **không** bị đóng băng — trọng lực quan sát được hai trục đó nên
+ước lượng bias ở đấy là đúng đắn và có ích.
+
+Điều khiển bằng tham số `est_yaw_bias_learn` (mặc định 0). Lắp từ kế vào thì
+bias yaw trở nên quan sát được, lúc đó `set est_yaw_bias_learn=1`.
+
+### Kết quả đo sau khi sửa
+
+Máy giữ cố định, 5009 mẫu trong 100 giây:
+
+```
+  t(s)     d_yaw  do/ph(20s)      bgz
+   0.0     -0.25        0.00   0.0000
+  20.0     -0.64       -1.64   0.0000
+  50.0     -0.53       -0.37   0.0000
+  80.0     -1.42       -2.42   0.0000
+ 100.0     -0.56        1.57   0.0000
+```
+
+- `bgz` đứng yên tuyệt đối ở **0,0000**, biên độ 0
+- Từ giây 20 tới giây 100: **0,08 độ trong 80 giây = 0,06 độ/phút**
+- Tốc độ tức thời dao động **cả hai dấu** quanh 0 (−2,4 tới +1,6)
+
+Dấu đổi chiều là điều quan trọng nhất: trước khi sửa, tốc độ luôn một dấu và
+gần như không đổi (−216,6 tới −219,7). Giờ nó tản đều quanh không. **Thành
+phần trôi hệ thống đã biến mất**, còn lại chỉ là bước ngẫu nhiên của nhiễu con
+quay.
+
+**218 → 0,06 độ/phút, tức tốt hơn khoảng 3600 lần.**
+
+### Công cụ đo đi kèm
+
+Thêm hai cột `d_yaw` và `do/ph` vào `DBG_MODE_EST`, kèm lệnh CLI `yawzero` để
+chốt mốc.
+
+Hai chi tiết trong cách làm:
+
+- **Cộng dồn từng bước có gỡ gói**, không trừ hai góc. Yaw do `atan2` sinh ra
+  nên nằm trong ±180°; trừ thẳng thì trôi quá nửa vòng sẽ đọc ra số âm nhỏ dần
+  thay vì số dương lớn dần.
+- **Tốc độ tính trên cửa sổ trượt 20 giây**, không phải tổng chia thời gian.
+  Đã gặp thật: người dùng xoay drone 18° lúc bắt đầu đo, và cách tính cũ để cú
+  xoay đó nằm mãi trong tử số — tổng phẳng lì suốt hai phút mà cột tốc độ vẫn
+  đọc −8,8 độ/phút.
+
+Toàn bộ nằm ở tầng console, **không thêm một dòng nào vào vòng 1 kHz hay
+4 kHz** — dụng cụ đo không được làm chậm thứ nó đang đo.
+
+---
+
+## Bỏ ACRO khỏi công tắc, chia lại ba nấc — 28/08/2026
+
+### ACRO có hai vai trò, chỉ bỏ một
+
+**Nấc công tắc — đã gỡ.** `read_mode_switch()` giờ đòi thêm cờ
+`rc_mode_acro_enable`, mặc định 0. Ở ACRO máy bay không tự cân bằng: buông cần
+là nó giữ nguyên góc nghiêng và tiếp tục lật. Gạt nhầm giữa chuyến bay thì chỉ
+có vài giây để nhận ra.
+
+**Chế độ dự phòng tự động — GIỮ NGUYÊN.** Khi bộ ước lượng mất góc tin cậy,
+`ctrl_angle.c` vẫn tụt về ACRO. Đó là lựa chọn đúng, vì ACRO là chế độ duy
+nhất chạy được mà không cần biết góc — bắt nó bay ANGLE với một góc sai còn
+nguy hiểm hơn nhiều.
+
+Kiểm chứng: đặt ngưỡng ACRO xuống 582 trong khi kênh đang 992, tức kênh **đã
+vượt ngưỡng**.
+
+| | Kết quả |
+|---|---|
+| `acro_enable = 0` | POSHOLD — bị chặn đúng |
+| `acro_enable = 1` | ACRO — đường cũ vẫn nguyên |
+
+### Ba nấc mới
+
+```
+nấc THẤP  (172)  ->  ANGLE     tự cân bằng, ga bằng tay
+nấc GIỮA  (992)  ->  ALTHOLD   thêm giữ độ cao
+nấc CAO  (1811)  ->  POSHOLD   thêm giữ vị trí ngang
+```
+
+Ngưỡng tính từ hằng số CRSF nên đổi dải là ngưỡng tự theo:
+`ALTHOLD = (MIN+MID)/2 = 582`, `POSHOLD = (MID+MAX)/2 = 1401`.
+
+Thứ tự giữ nguyên nguyên tắc an toàn cũ: kênh mất tín hiệu hay chưa gán đều
+cho giá trị thấp, và giá trị thấp rơi vào chế độ cần ít cảm biến nhất.
+
+Ngưỡng ACRO để trùng 1401 là có ý — ai cố ý bật lên thì nấc CAO đổi từ POSHOLD
+thành ACRO, vì thang chọn xét ACRO trước. Hợp lý cho người biết mình làm gì.
+
+Kiểm chứng cả ba nhánh bằng cách dịch ngưỡng quanh kênh cố định 992:
+
+| Cấu hình | Chế độ ra |
+|---|---|
+| althold=582, poshold=1401 (thật) | ALTHOLD |
+| althold=1200 → 992 dưới ngưỡng | ANGLE |
+| poshold=900 → 992 trên ngưỡng | POSHOLD |
+
+### Còn tồn
+
+Nhãn `[DU PHONG - chua co goc]` hiện ra cả khi nguyên nhân là **mất flow**.
+Hai nguyên nhân khác hẳn nhau dùng chung một dòng chữ — chưa sửa.

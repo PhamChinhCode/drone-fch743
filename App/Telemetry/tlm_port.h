@@ -58,10 +58,44 @@ uint16_t tlm_port_tx_free(void);
 uint32_t tlm_port_dropped(void);
 
 /**
- * Đọc dữ liệu nhận được (uplink).
+ * Đọc dữ liệu nhận được (uplink) từ CẢ HAI đường, bất kể đang phát ra đường nào.
+ *
+ * VÌ SAO ĐỌC CẢ HAI: phần mềm nối qua USB không thể tự bảo mạch bay chuyển
+ * sang USB nếu mạch bay chỉ nghe đường UART — lệnh đó không bao giờ tới nơi,
+ * và người dùng phải gõ tay trên một cổng khác trước. Đọc cả hai xoá bỏ bước
+ * thừa đó.
+ *
+ * Không có rủi ro thêm: mọi lệnh đều qua CRC và qua các lớp chặn (từ chối khi
+ * ARM, kẹp min/max) giống hệt như khi đến từ đường kia.
+ *
  * @return số byte đã lấy ra, 0 nếu chưa có gì.
  */
 uint16_t tlm_port_read(uint8_t *dst, uint16_t max_len);
+
+/**
+ * Đường truyền mà byte uplink gần nhất đi vào.
+ *
+ * Dùng cho lệnh CLI `port here`: chuyển hướng PHÁT về đúng đường mà lệnh vừa
+ * đến. Nhờ vậy phần mềm chỉ cần gửi một lệnh là tự nối được, không phải đoán
+ * mình đang ở cổng nào.
+ */
+tlm_port_type_t tlm_port_last_rx(void);
+
+/**
+ * Nạp byte nhận được từ USB CDC vào hàng đợi uplink.
+ *
+ * GỌI TỪ CDC_Receive_FS(), tức từ NGẮT USB. Hàm chỉ chép byte vào ring
+ * buffer rồi trả về ngay — không phân tích khung, không gọi ngược lên tầng
+ * trên. Việc phân tích diễn ra ở vòng lặp chính qua tlm_port_read().
+ *
+ * Đệm đầy thì phần thừa bị BỎ và đếm vào tlm_port_usb_overruns(). Đây là
+ * trường hợp app đổ lệnh nhanh hơn vòng lặp chính rút ra — hiếm, vì lệnh do
+ * người bấm, nhưng đếm được thì gỡ lỗi mới có chỗ bấu víu.
+ */
+void tlm_port_usb_rx(const uint8_t *data, uint32_t len);
+
+/** Số byte uplink USB đã bị bỏ vì đệm đầy. */
+uint32_t tlm_port_usb_overruns(void);
 
 /** Gọi từ HAL_UART_TxCpltCallback khi huart == &huart3. */
 void tlm_port_tx_complete_isr(void);

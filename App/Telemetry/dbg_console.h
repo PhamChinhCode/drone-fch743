@@ -55,6 +55,7 @@ typedef enum {
     DBG_MODE_MAGCAL,    /**< HIEU CHUAN tu ke - cong cu GIAI DOAN 4       */       /**< QMC6309 qua sensor hub - GIAI DOAN 3        */
     DBG_MODE_AXISCAL,   /**< TU NHAN chieu truc IMU2 - cong cu GIAI DOAN 2A  */
     DBG_MODE_IMU_CMP,   /**< SO SANH hai IMU + nen nhieu - cong cu GIAI DOAN 2 */
+    DBG_MODE_ALTHOLD,   /**< GIU DO CAO: moc, tot do len, ga, tich phan   */
     DBG_MODE_COUNT
 } dbg_mode_t;
 
@@ -97,7 +98,39 @@ bool dbg_console_owns(const UART_HandleTypeDef *huart);
 /** Số byte đã bị bỏ vì đệm đầy — nếu tăng thì đang in quá nhanh. */
 uint32_t dbg_console_dropped(void);
 
+/**
+ * Số byte còn trống trong bộ đệm gửi.
+ *
+ * Dành cho những chỗ in ra NHIỀU hơn sức chứa bộ đệm — ví dụ lệnh CLI `dump`
+ * xuất 132 dòng trong khi bộ đệm chỉ có DBG_TX_BUFFER_SIZE byte. Người gọi
+ * dừng lại khi hết chỗ rồi in tiếp ở lần gọi sau, thay vì đẩy hết một lượt
+ * và để module lặng lẽ bỏ phần thừa.
+ */
+uint16_t dbg_console_tx_free(void);
+
 /* --- Gọi từ ngắt, xem drv_hal_callbacks.c ------------------------------ */
 void dbg_console_tx_complete_isr(void);
+
+/* ==========================================================================
+ * Đo trôi yaw
+ *
+ * Yaw không có chuẩn tuyệt đối nào (không la bàn, không GPS) nên nó tích phân
+ * bias con quay và trôi mãi. Nhóm hàm này chốt một mốc rồi đếm xem đã trôi bao
+ * xa kể từ mốc đó — biến "cảm thấy nó quay" thành một con số đọc được.
+ *
+ * Hiển thị ở cột `d_yaw` và `do/ph` của DBG_MODE_EST.
+ * ========================================================================== */
+
+/** Chốt lại mốc ngay tại góc hiện tại. Lệnh CLI `yawzero` gọi hàm này. */
+void dbg_console_yaw_zero(void);
+
+/** Đã trôi bao nhiêu độ kể từ mốc. Cộng dồn, KHÔNG gói về ±180. */
+float dbg_console_yaw_drift_deg(void);
+
+/** Tốc độ trôi, độ/phút. Trả 0 trong 2 giây đầu vì mẫu còn quá ngắn. */
+float dbg_console_yaw_drift_dpm(void);
+
+/** Thời gian kể từ lúc chốt mốc, mili giây. */
+uint32_t dbg_console_yaw_elapsed_ms(void);
 
 #endif /* DBG_CONSOLE_H */

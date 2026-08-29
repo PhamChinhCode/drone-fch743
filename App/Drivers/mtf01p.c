@@ -5,6 +5,7 @@
 
 #include "mtf01p.h"
 #include "fc_state.h"
+#include "param_table.h"
 #include "fc_time.h"
 #include "main.h"
 
@@ -102,7 +103,7 @@ static void handle_rangefinder(const uint8_t *payload, uint16_t size)
      * Cảm biến trả số âm khi mục tiêu ngoài tầm. Giữ lại giá trị đo cuối cùng
      * nhưng hạ cờ range_valid, để tầng ước lượng biết mà không dùng số này.
      */
-    if (m.distance_mm < 0 || m.distance_mm > FLOW_RANGE_MAX_MM) {
+    if (m.distance_mm < 0 || m.distance_mm > g_params.flow_range_max_mm) {
         g_fc.flow.range_valid   = false;
         g_fc.flow.range_quality = 0;
     } else {
@@ -128,8 +129,10 @@ static void handle_opflow(const uint8_t *payload, uint16_t size)
     /* Số đếm thô có thể vượt int16 khi rê rất nhanh — chặn lại cho gọn. */
     const int32_t raw_sensor[2] = { m.motion_x, m.motion_y };
 
-    const int32_t rx = raw_sensor[FLOW_AXIS_MAP_X] * (int32_t)(FLOW_AXIS_SIGN_X);
-    const int32_t ry = raw_sensor[FLOW_AXIS_MAP_Y] * (int32_t)(FLOW_AXIS_SIGN_Y);
+    const int32_t rx = raw_sensor[g_params.flow_axis_map_x] *
+                       (int32_t)g_params.flow_axis_sign_x;
+    const int32_t ry = raw_sensor[g_params.flow_axis_map_y] *
+                       (int32_t)g_params.flow_axis_sign_y;
 
     g_fc.flow.flow_x_raw  = (int16_t)fc_constrain_i32(rx, -32768, 32767);
     g_fc.flow.flow_y_raw  = (int16_t)fc_constrain_i32(ry, -32768, 32767);
@@ -137,19 +140,19 @@ static void handle_opflow(const uint8_t *payload, uint16_t size)
 
     /*
      * Quy đổi sang vận tốc thân:
-     *   tốc độ góc [rad/s] = số_đếm * FLOW_RAD_PER_COUNT / dt
+     *   tốc độ góc [rad/s] = số_đếm * flow_rad_per_count / dt
      *   vận tốc     [m/s]  = tốc độ góc * độ cao
      *
      * Chỉ tính khi có số đo khoảng cách hợp lệ và chất lượng đủ tốt; thiếu
      * một trong hai thì vận tốc là vô nghĩa nên trả về 0 thay vì số rác.
      */
     if (g_fc.flow.range_valid &&
-        m.quality >= FLOW_QUALITY_MIN &&
+        m.quality >= g_params.flow_quality_min &&
         dt_us > 0u && dt_us < 200000u) {
 
         const float dt_s     = (float)dt_us * 1.0e-6f;
         const float height_m = (float)g_fc.flow.range_mm * 0.001f;
-        const float k        = (FLOW_RAD_PER_COUNT / dt_s) * height_m;
+        const float k        = (g_params.flow_rad_per_count / dt_s) * height_m;
 
         g_fc.flow.velocity_mps.x = (float)rx * k;
         g_fc.flow.velocity_mps.y = (float)ry * k;

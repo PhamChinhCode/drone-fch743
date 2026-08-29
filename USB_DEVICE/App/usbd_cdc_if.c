@@ -22,7 +22,7 @@
 #include "usbd_cdc_if.h"
 
 /* USER CODE BEGIN INCLUDE */
-
+#include "tlm_port.h"
 /* USER CODE END INCLUDE */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -261,6 +261,16 @@ static int8_t CDC_Control_FS(uint8_t cmd, uint8_t* pbuf, uint16_t length)
 static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 {
   /* USER CODE BEGIN 6 */
+  /*
+   * Truoc day khoi nay vut du lieu di: no bao HAL nhan tiep ma khong doc gi
+   * ca, nen duong uplink qua USB CDC khong ton tai.
+   *
+   * Gio byte duoc chep vao hang doi cua tlm_port. Ham do chi chep va tra ve
+   * ngay - dang o trong NGAT USB, khong duoc phan tich khung hay goi nguoc
+   * len tang tren o day.
+   */
+  tlm_port_usb_rx(Buf, *Len);
+
   USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
   USBD_CDC_ReceivePacket(&hUsbDeviceFS);
   return (USBD_OK);

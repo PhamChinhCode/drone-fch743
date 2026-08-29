@@ -4,6 +4,7 @@
  */
 
 #include "fc_state.h"
+#include "param_table.h"
 #include "usb_msc.h"
 #include "stm32h7xx.h"   /* chỉ cần cho __get_PRIMASK / __set_PRIMASK */
 
@@ -54,7 +55,7 @@ void fc_state_init(void)
     g_fc.est.attitude_q = (quatf_t){ 1.0f, 0.0f, 0.0f, 0.0f };
 
     /* Mốc áp suất mặc định để altitude không ra giá trị vô lý trước hiệu chuẩn. */
-    g_fc.baro.ground_pressure_pa = BARO_SEA_LEVEL_PA;
+    g_fc.baro.ground_pressure_pa = g_params.baro_sea_level_pa;
 
     /* Kênh RC về giữa, ga về thấp nhất. */
     for (int i = 0; i < RC_CHANNEL_COUNT; i++) {
@@ -177,7 +178,7 @@ bool fc_state_check_arm(void)
     }
 
     /* Cần gạt ga xuống thấp trước khi arm. */
-    if (g_fc.rc.throttle > ARM_THROTTLE_MAX_NORM) {
+    if (g_fc.rc.throttle > g_params.arm_throttle_max_norm) {
         block |= ARM_BLOCK_THROTTLE_HIGH;
     }
 
@@ -193,7 +194,7 @@ bool fc_state_check_arm(void)
     }
 
     /* Máy bay phải đang nằm tương đối phẳng. */
-    const float tilt_limit_rad = ARM_MAX_TILT_DEG * FC_DEG_TO_RAD;
+    const float tilt_limit_rad = g_params.arm_max_tilt_deg * FC_DEG_TO_RAD;
     if (fabsf(g_fc.est.attitude_rad.roll)  > tilt_limit_rad ||
         fabsf(g_fc.est.attitude_rad.pitch) > tilt_limit_rad) {
         block |= ARM_BLOCK_NOT_LEVEL;

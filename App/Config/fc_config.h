@@ -328,8 +328,47 @@
  *
  * Tính thẳng từ ba hằng số CRSF để nếu sau này đổi dải thì ngưỡng tự theo.
  */
-#define RC_MODE_POSHOLD_THRESHOLD ((RC_CRSF_CHANNEL_MIN + RC_CRSF_CHANNEL_MID) / 2) /* 582  */
-#define RC_MODE_ACRO_THRESHOLD ((RC_CRSF_CHANNEL_MID + RC_CRSF_CHANNEL_MAX) / 2)    /* 1401 */
+/*
+ * BA NẤC CÔNG TẮC, theo mức hỗ trợ tăng dần:
+ *
+ *     nấc THẤP  (172)  ->  ANGLE     tự cân bằng, ga bằng tay
+ *     nấc GIỮA  (992)  ->  ALTHOLD   thêm giữ độ cao
+ *     nấc CAO  (1811)  ->  POSHOLD   thêm giữ vị trí ngang
+ *
+ * Ngưỡng phải nằm ở KHOẢNG GIỮA hai nấc liền kề, không phải một con số tròn
+ * nào đó: công tắc ba nấc chỉ cho ĐÚNG ba giá trị 172 / 992 / 1811.
+ *
+ * Thứ tự này giữ nguyên nguyên tắc an toàn cũ — kênh mất tín hiệu hoặc chưa
+ * gán đều cho giá trị thấp, và giá trị thấp rơi vào chế độ được hỗ trợ nhiều
+ * nhất mà không cần cảm biến nào ngoài IMU. Đừng đảo lại.
+ *
+ * Tính thẳng từ ba hằng số CRSF để nếu sau này đổi dải thì ngưỡng tự theo.
+ */
+#define RC_MODE_ALTHOLD_THRESHOLD ((RC_CRSF_CHANNEL_MIN + RC_CRSF_CHANNEL_MID) / 2) /* 582  */
+#define RC_MODE_POSHOLD_THRESHOLD ((RC_CRSF_CHANNEL_MID + RC_CRSF_CHANNEL_MAX) / 2) /* 1401 */
+
+/*
+ * Ngưỡng ACRO trùng với ngưỡng POSHOLD là CÓ Ý.
+ *
+ * Mặc định `rc_mode_acro_enable = 0` nên dòng này không có tác dụng gì. Ai cố
+ * ý bật ACRO lên thì nấc CAO đổi từ POSHOLD thành ACRO — vì thang chọn xét
+ * ACRO trước. Đó là hành vi hợp lý cho người biết mình đang làm gì: nấc mạnh
+ * nhất trở thành chế độ thô nhất.
+ */
+#define RC_MODE_ACRO_THRESHOLD ((RC_CRSF_CHANNEL_MID + RC_CRSF_CHANNEL_MAX) / 2) /* 1401 */
+
+/*
+ * Có cho phép chọn ACRO bằng công tắc hay không. 0 = KHÔNG (mặc định).
+ *
+ * ACRO không tự cân bằng — buông cần thì máy bay giữ nguyên góc nghiêng và
+ * tiếp tục lật. Với một khung đang trong giai đoạn chỉnh, gạt nhầm vào đó là
+ * mất máy bay.
+ *
+ * Tắt nấc này KHÔNG gỡ ACRO khỏi firmware: nó vẫn là chế độ dự phòng tự động
+ * khi bộ ước lượng mất góc tin cậy, và đó là lựa chọn đúng vì ACRO là chế độ
+ * duy nhất chạy được mà không cần biết góc.
+ */
+#define RC_MODE_ACRO_ENABLE 0
 
 /* ==========================================================================
  * Giữ vận tốc bằng optical flow (chế độ POSHOLD)
@@ -346,19 +385,107 @@
  * 6°/(m/s) nghĩa là trôi 1 m/s thì nghiêng 6° để hãm, cho gia tốc hãm
  * g·tan(6°) ≈ 1,0 m/s² — dập hết 1 m/s trong khoảng một giây. Êm, không giật.
  */
-#define POSHOLD_VEL_KP 6.0f
+#define POSHOLD_VEL_KP 2.0f
 
 /*
  * Khâu I chống GIÓ. Gió thổi đều là một nhiễu loạn không đổi; chỉ có P thì
  * máy bay đứng ở một độ nghiêng cân bằng nhưng VẪN TRÔI đều — đúng bài toán
  * đã gặp ở trục yaw.
  */
-#define POSHOLD_VEL_KI 2.0f
+#define POSHOLD_VEL_KI 0.5f
 #define POSHOLD_I_LIMIT_DEG 8.0f
 
 /* Trần nghiêng. Nghiêng nhiều thì flow bị cổng nghiêng từ chối, mất luôn
  * nguồn đo — nên trần này phải THẤP hơn EST_FLOW_MAX_TILT_DEG. */
 #define POSHOLD_MAX_TILT_DEG 15.0f
+
+/*
+ * Vòng NGOÀI CÙNG: sai số vị trí -> vận tốc mong muốn.
+ *
+ * 1,0 nghĩa là trôi 1 m thì đòi bò về với 1 m/s. Giữ THẤP: đây là vòng ngoài
+ * của một vòng ngoài (vị trí -> vận tốc -> góc -> tốc độ góc), và mỗi tầng
+ * thêm vào một lượng trễ. Đặt cao thì máy bay đảo qua đảo lại quanh điểm giữ
+ * với chu kỳ vài giây.
+ *
+ * Chỉnh SAU CÙNG, khi vòng vận tốc đã đứng yên gọn gàng.
+ */
+#define POSHOLD_POS_KP 0.2f
+
+/* ==========================================================================
+ * Giữ độ cao (ALTHOLD) — cần ga điều khiển TỐC ĐỘ LÊN thay vì lực đẩy
+ *
+ * Cấu trúc hai vòng lồng nhau, xem App/Control/ctrl_althold.h.
+ *
+ * TRÌNH TỰ CHỈNH — làm đúng thứ tự này, đừng nhảy cóc:
+ *   1. Đo ALTHOLD_HOVER_THR trước tiên. Treo máy bay ở chế độ ANGLE, đọc cột
+ *      `thr` trên console lúc nó đứng yên độ cao. KHÔNG đoán con số này.
+ *   2. Chỉ ALTHOLD_CLIMB_KP, tăng dần tới khi bắt đầu nhấp nhô rồi lùi 30 %.
+ *   3. Thêm ALTHOLD_CLIMB_KI cho tới khi hết trôi chậm theo pin yếu dần.
+ *   4. ALTHOLD_ALT_KP sau cùng, và giữ THẤP — nó là vòng ngoài.
+ * ========================================================================== */
+
+/*
+ * Ga treo — số hạng NUÔI TIẾN, gánh phần lớn công việc.
+ *
+ * 0,35 chỉ là chỗ khởi đầu cho một khung 5 inch thông thường. PHẢI đo lại
+ * trên chính máy bay này: sai 10 % ở đây là tích phân phải bù 10 %, mất vài
+ * giây, và trong vài giây đó máy bay lên hoặc xuống mất kiểm soát.
+ */
+#define ALTHOLD_HOVER_THR 0.35f
+
+/* Điểm giữa của cần ga. Cần có lò xo về giữa thì để 0,5. */
+#define ALTHOLD_STICK_CENTRE 0.5f
+
+/*
+ * Vùng chết quanh điểm giữa, tính theo nửa hành trình cần.
+ *
+ * Rộng hơn vùng chết thường của cần lái vì đây là chỗ người lái BUÔNG tay và
+ * mong máy bay đứng yên. Cần ga rẻ tiền trôi vài phần trăm là chuyện thường,
+ * và mỗi phần trăm trôi ở đây biến thành một lệnh leo dai dẳng.
+ */
+#define ALTHOLD_STICK_DEADBAND 0.10f
+
+/* Tốc độ lên/xuống tối đa khi đẩy cần hết hành trình. */
+#define ALTHOLD_MAX_CLIMB_MPS 2.0f
+
+/*
+ * Vòng ngoài: sai số độ cao -> tốc độ lên mong muốn.
+ * 1,0 nghĩa là lệch 1 m thì đòi leo 1 m/s. Giữ thấp — vòng ngoài mà mạnh thì
+ * nó đánh nhau với vòng trong và sinh dao động chu kỳ dài.
+ */
+#define ALTHOLD_ALT_KP 1.0f
+
+/*
+ * Vòng trong: sai số tốc độ lên -> lượng ga.
+ * 0,10 nghĩa là lệch 1 m/s thì thêm 10 % dải ga.
+ */
+#define ALTHOLD_CLIMB_KP 0.25f
+#define ALTHOLD_CLIMB_KI 0.03f
+#define ALTHOLD_CLIMB_KD 0.01f
+
+/*
+ * Lọc khâu vi phân. Đặt THẤP hơn nhiều so với vòng tốc độ góc: tốc độ lên
+ * suy ra từ baro nên vốn đã chậm và ồn, lấy đạo hàm nó mà không lọc mạnh thì
+ * ra toàn nhiễu.
+ */
+#define ALTHOLD_DTERM_LPF_HZ 10.0f
+
+/*
+ * Chặn tích phân. Đây cũng chính là dư địa mà chuyển-vào-mượt được phép dùng,
+ * nên đừng đặt quá nhỏ: người lái vào chế độ lúc đang giữ ga 0,6 mà ga treo
+ * là 0,35 thì cần 0,25 dư địa.
+ */
+#define ALTHOLD_I_LIMIT 0.30f
+
+/*
+ * Trần và sàn ga khi đang giữ độ cao.
+ *
+ * Sàn KHÁC 0 là có chủ ý: để 0 thì một lần ước lượng độ cao sai có thể cắt
+ * hẳn motor giữa không trung. 0,10 giữ cho cánh vẫn quay và máy bay rơi có
+ * kiểm soát thay vì rơi tự do.
+ */
+#define ALTHOLD_THR_MIN 0.10f
+#define ALTHOLD_THR_MAX 0.85f
 
 /* ==========================================================================
  * Điều khiển từ xa (CRSF / ELRS 2.4G trên USART2 @ 420000)
@@ -424,9 +551,9 @@
  * ========================================================================== */
 /* ICM20602 trên SPI1, DRDY = PC4 (EXTI4) */
 #define IMU_SAMPLE_RATE_HZ 8000
-#define IMU_GYRO_FS_DPS 2000          /* 250|500|1000|2000 °/s */
-#define IMU_ACCEL_FS_G 16             /* 2|4|8|16 g            */
-#define IMU_CALIB_SAMPLE_COUNT 2000   /* số mẫu lấy bias gyro  */
+#define IMU_GYRO_FS_DPS 2000        /* 250|500|1000|2000 °/s */
+#define IMU_ACCEL_FS_G 16           /* 2|4|8|16 g            */
+#define IMU_CALIB_SAMPLE_COUNT 2000 /* số mẫu lấy bias gyro  */
 
 /*
  * Ngưỡng phát hiện "máy bay chưa đứng yên" trong lúc lấy bias gyro, tính bằng
@@ -457,9 +584,9 @@
  * Dùng chung cho cả hai IMU.
  */
 #define IMU_CALIB_SD_MIN_SAMPLES 64u
-#define IMU_SPI_TIMEOUT_MS 10         /* timeout SPI lúc init  */
-#define IMU_GYRO_LPF_HZ 100.0f        /* lọc gyro cho vòng PID */
-#define IMU_ACCEL_LPF_HZ 30.0f        /* lọc accel cho ước lượng */
+#define IMU_SPI_TIMEOUT_MS 10  /* timeout SPI lúc init  */
+#define IMU_GYRO_LPF_HZ 100.0f /* lọc gyro cho vòng PID */
+#define IMU_ACCEL_LPF_HZ 30.0f /* lọc accel cho ước lượng */
 
 /*
  * Xoay trục cảm biến sang trục thân máy bay.
@@ -871,6 +998,23 @@
 #define EST_GYRO_BIAS_MAX_DPS 10.0f   /* chặn bias phi lý       */
 
 /*
+ * Cho bộ lọc tự học bias con quay trục YAW hay không. 0 = KHÔNG (mặc định).
+ *
+ * Gia tốc kế không nhìn thấy yaw, nên trạng thái này KHÔNG QUAN SÁT ĐƯỢC và
+ * để nó tự do là để một bước ngẫu nhiên điều khiển hướng của máy bay.
+ *
+ * ĐO ĐƯỢC 28/08/2026, máy giữ cố định trên giá:
+ *     con quay thật   +0,011 °/s  =   +0,7 độ/phút
+ *     bgz bộ lọc tự ra  3,610 °/s  = −216,6 độ/phút
+ *     trôi thực tế                   −218,2 độ/phút
+ * Bộ lọc tự chế ra 99,7 % lượng trôi.
+ *
+ * BẬT LẠI (đặt 1) khi đã lắp từ kế — lúc đó bias yaw mới quan sát được và
+ * việc học nó trở thành có ích, vì nó sẽ bám theo trôi nhiệt thật.
+ */
+#define EST_YAW_BIAS_LEARN 0
+
+/*
  * Accel chỉ đo đúng hướng trọng lực khi máy bay KHÔNG tăng tốc. Lệch khỏi
  * 9,81 m/s² càng nhiều thì số đo càng vô dụng, nên độ tin cậy bị hạ theo
  * bình phương độ lệch thay vì cắt phăng — cắt cứng làm bộ lọc giật mỗi lần
@@ -946,7 +1090,36 @@
 /* ==========================================================================
  * Console gỡ lỗi dạng chữ (đọc bằng PuTTY / terminal bất kỳ)
  * ========================================================================== */
-#define DBG_TX_BUFFER_SIZE 1024   /* ring buffer gửi        */
+#define DBG_TX_BUFFER_SIZE 1024 /* ring buffer gửi        */
+/* ==========================================================================
+ * THẺ SD — CÔNG TẮC TỔNG
+ *
+ * Đặt 0 để BỎ HẲN mọi thứ đụng tới thẻ: khởi tạo SDMMC, FATFS, blackbox, và
+ * chế độ đọc thẻ qua USB.
+ *
+ * VÌ SAO ĐANG ĐẶT 0 — ĐO ĐƯỢC BẰNG DEBUGGER, KHÔNG PHẢI PHỎNG ĐOÁN:
+ *
+ *   Với thẻ hiện tại, HAL_SD_Init() không trả về. CPU quay vòng vĩnh viễn
+ *   trong SD_SendSDStatus() (stm32h7xx_hal_sd.c:3363) — một vòng chờ CHẶN.
+ *
+ *   Hậu quả không phải là "mất log": main() dừng lại ngay tại đó, nên
+ *   tlm_port_init(), dbg_console_set_mode(), và toàn bộ phần khởi tạo cảm
+ *   biến KHÔNG BAO GIỜ CHẠY. Không telemetry, không CLI, không điều khiển.
+ *   Một cái thẻ hỏng làm liệt cả mạch bay.
+ *
+ *   Cách nhận ra lúc đó: đọc s_port và s_mode trong RAM, cả hai đều bằng 0
+ *   dù chúng được đặt ở hai dòng khác nhau trong main() — tức là main() chưa
+ *   chạy tới dòng nào trong hai dòng đó.
+ *
+ * Ghi chú ở main.c (mục "THE SD HONG THI KHONG DUOC TREO CA BO DIEU KHIEN
+ * BAY") đã lường trước chuyện này, nhưng phép chặn ở đó chỉ bắt Error_Handler
+ * — nó không bắt được việc HAL_SD_Init tự nó chặn vô hạn.
+ *
+ * MUỐN DÙNG LẠI THẺ: đặt 1, và trước đó phải sửa nguyên nhân gốc — thay thẻ,
+ * hoặc thay HAL_SD_Init bằng bản có hạn thời gian thật sự.
+ * ========================================================================== */
+#define FC_SD_ENABLE 0
+
 /* ==========================================================================
  * Blackbox — ghi log chuyến bay ra thẻ SD
  *

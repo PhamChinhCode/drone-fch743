@@ -43,6 +43,17 @@
 void ctrl_rate_init(void);
 
 /**
+ * Nap lai he so PID tu g_params vao cau truc dieu khien.
+ *
+ * PHAI goi sau moi lan he so doi luc chay. Module nay giu mot ban sao (vong
+ * nong duyet ba truc bang chi so mang, khong doc thang truong phang cua
+ * g_params duoc), nen khong goi thi tham so doi ma may bay khong doi.
+ *
+ * param_apply.c goi ham nay; binh thuong khong can goi tay.
+ */
+void ctrl_rate_apply_params(void);
+
+/**
  * Chạy một bước nếu có mẫu gyro mới. Tự giữ nhịp nên gọi bao nhiêu lần cũng
  * được. Gọi trong vòng lặp chính, TRƯỚC mixer_update().
  *

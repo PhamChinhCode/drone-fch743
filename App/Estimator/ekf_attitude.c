@@ -4,6 +4,7 @@
  */
 
 #include "ekf_attitude.h"
+#include "param_table.h"
 
 #define N  EKF_ATT_STATES        /* 6 */
 
@@ -13,6 +14,17 @@
 
 static quatf_t s_q;              /* trạng thái danh nghĩa: thân -> NED     */
 static vec3f_t s_bias;           /* bias gyro, rad/s                        */
+
+/**
+ * Có cho bộ lọc tự học bias con quay trục YAW hay không.
+ *
+ * Mặc định KHÔNG — xem giải thích dài kèm số liệu đo ở chỗ áp dụng dx[5].
+ * Chỉ bật khi đã có nguồn đo hướng tuyệt đối (từ kế).
+ */
+static inline bool yaw_bias_learning(void)
+{
+    return g_params.est_yaw_bias_learn != 0u;
+}
 static float   s_P[N][N];        /* hiệp phương sai của trạng thái sai số   */
 static float   s_R[3][3];        /* ma trận xoay hiện tại, thân -> NED      */
 static bool    s_valid;
@@ -238,14 +250,27 @@ static void predict(vec3f_t gyro_rad, float dt)
     m66_mul_bt(tmp, F, Pn);
 
     /* Nhiễu quá trình: gyro bơm vào góc, bước ngẫu nhiên bơm vào bias. */
-    const float gyro_sd  = EST_GYRO_NOISE_DPS * FC_DEG_TO_RAD;
-    const float bias_sd  = EST_GYRO_BIAS_WALK_DPS * FC_DEG_TO_RAD;
+    const float gyro_sd  = g_params.est_gyro_noise_dps * FC_DEG_TO_RAD;
+    const float bias_sd  = g_params.est_gyro_bias_walk_dps * FC_DEG_TO_RAD;
     const float q_theta  = gyro_sd * gyro_sd * dt;
     const float q_bias   = bias_sd * bias_sd * dt;
 
     for (int i = 0; i < 3; i++) {
         Pn[i][i]         += q_theta;
         Pn[i + 3][i + 3] += q_bias;
+    }
+
+    /*
+     * Bias yaw: KHÔNG bơm bước ngẫu nhiên vào khi đang đóng băng.
+     *
+     * Bơm nhiễu quá trình vào một trạng thái mà không phép đo nào chạm tới
+     * được nghĩa là bảo bộ lọc "đại lượng này đang đổi, và ta ngày càng không
+     * biết nó bằng bao nhiêu". Phương sai phình lên, độ lợi Kalman cho nó
+     * phình theo, và rồi mọi hạt nhiễu của gia tốc kế đều được nhân lên rồi
+     * cộng thẳng vào bias — xem giải thích dài ở chỗ áp dụng dx[5].
+     */
+    if (!yaw_bias_learning()) {
+        Pn[5][5] -= q_bias;
     }
 
     memcpy(s_P, Pn, sizeof(s_P));
@@ -279,9 +304,10 @@ static void update_accel(vec3f_t a)
      * lần đi qua ngưỡng.
      */
     const float dev   = fabsf(vec3f_norm(a) - g);
-    const float scale = 1.0f + (dev / EST_ACCEL_REJECT_MPS2)
-                             * (dev / EST_ACCEL_REJECT_MPS2);
-    const float r     = EST_ACCEL_NOISE_MPS2 * EST_ACCEL_NOISE_MPS2 * scale;
+    const float scale = 1.0f + (dev / g_params.est_accel_reject_mps2)
+                             * (dev / g_params.est_accel_reject_mps2);
+    const float r     = g_params.est_accel_noise_mps2 *
+                        g_params.est_accel_noise_mps2 * scale;
 
     /*
      * H = ∂h/∂δθ = [gb]×  (ba cột đầu), phần bias bằng 0.
@@ -388,19 +414,77 @@ static void update_accel(vec3f_t a)
 
     s_bias.x += dx[3];
     s_bias.y += dx[4];
-    s_bias.z += dx[5];
+
+    /*
+     * ================= BIAS YAW: ĐÓNG BĂNG THEO MẶC ĐỊNH =================
+     *
+     * Gia tốc kế đo hướng trọng lực. Xoay quanh trục thẳng đứng KHÔNG làm đổi
+     * hướng trọng lực, nên không có gì trong phép đo này mang thông tin về
+     * yaw — ma trận H hạng 2, nhân không gian nằm đúng dọc trục yaw.
+     *
+     * Trạng thái bias yaw vì thế KHÔNG QUAN SÁT ĐƯỢC. Nó chỉ nhúc nhích qua
+     * hiệp phương sai chéo với sai số góc, mà thứ đẩy nó khi máy bay nằm im
+     * chính là nhiễu của gia tốc kế. Một bước ngẫu nhiên không có lực kéo về.
+     *
+     * ĐO ĐƯỢC THẬT, 28/08/2026, máy bay giữ cố định trên giá:
+     *
+     *     con quay thật (gz, 508 mẫu)      +0,011 °/s  =   +0,7 độ/phút
+     *     bias EKF tự ước lượng (bgz)       3,610 °/s  = −216,6 độ/phút
+     *     trôi yaw quan sát (2262 mẫu)                   −218,2 độ/phút
+     *
+     * Sai lệch giữa hai dòng cuối là 0,7 %: bộ lọc tự chế ra 99,7 % lượng
+     * trôi, rồi trừ nó khỏi một con quay vốn đã sạch.
+     *
+     * Cùng phép đo hai mươi phút trước cho bgz = 0,12 và trôi 9,45 độ/phút —
+     * vẫn đúng tỉ lệ. Chính sự thất thường đó là chữ ký của một bước ngẫu
+     * nhiên không bị ràng buộc.
+     *
+     * Khi không có phép đo nào, ước lượng tốt nhất của một đại lượng là GIÁ
+     * TRỊ TIÊN NGHIỆM — mà giá trị đó thì hiệu chuẩn lúc khởi động đã đo, với
+     * sai số chuẩn của trung bình 2000 mẫu chỉ khoảng 0,002 °/s. Để bộ lọc
+     * "cải thiện" con số đó bằng dữ liệu không chứa thông tin thì chỉ làm nó
+     * tệ đi.
+     *
+     * Roll và pitch KHÔNG bị đóng băng: trọng lực quan sát được hai trục đó,
+     * nên ước lượng bias ở đấy là đúng đắn và có ích.
+     *
+     * Lắp từ kế vào thì bias yaw trở nên quan sát được — lúc đó bật lại bằng
+     * `set est_yaw_bias_learn=1`.
+     * ===================================================================== */
+    if (yaw_bias_learning()) {
+        s_bias.z += dx[5];
+    }
 
     /*
      * Chặn bias. Bias trục Z không quan sát được nên nếu để tự do nó sẽ trôi
      * theo nhiễu cho tới khi thành số vô lý và kéo cả ước lượng góc đi theo.
      */
-    const float lim = EST_GYRO_BIAS_MAX_DPS * FC_DEG_TO_RAD;
+    const float lim = g_params.est_gyro_bias_max_dps * FC_DEG_TO_RAD;
     s_bias.x = fc_constrainf(s_bias.x, -lim, lim);
     s_bias.y = fc_constrainf(s_bias.y, -lim, lim);
     s_bias.z = fc_constrainf(s_bias.z, -lim, lim);
 
-    /* Chặn luôn phương sai của bias yaw, vì nó chỉ tăng chứ không bao giờ giảm. */
-    if (s_P[5][5] > lim * lim) {
+    if (!yaw_bias_learning()) {
+        /*
+         * Tách hẳn trạng thái bias yaw khỏi phần còn lại của ma trận hiệp
+         * phương sai.
+         *
+         * Chỉ bỏ qua dx[5] thôi là chưa đủ: các số hạng chéo P[5][k] vẫn tồn
+         * tại, nên bộ lọc vẫn tính ra độ lợi cho nó và vẫn để nó bóp méo phép
+         * cập nhật của những trạng thái khác. Xoá hàng và cột 5, giữ lại một
+         * đường chéo nhỏ, là cách nói đúng đắn rằng "đại lượng này đã biết và
+         * không liên quan tới các đại lượng kia".
+         *
+         * Ma trận vẫn nửa xác định dương vì thao tác này chỉ tách rời một
+         * trạng thái, không tạo ra tương quan mới.
+         */
+        for (int k = 0; k < N; k++) {
+            s_P[5][k] = 0.0f;
+            s_P[k][5] = 0.0f;
+        }
+        s_P[5][5] = 1.0e-12f;
+    } else if (s_P[5][5] > lim * lim) {
+        /* Phương sai bias yaw chỉ tăng chứ không bao giờ giảm — phải chặn. */
         s_P[5][5] = lim * lim;
     }
 }
@@ -415,8 +499,8 @@ void ekf_attitude_update(vec3f_t gyro_dps, vec3f_t accel_mps2, float dt_s)
         return;                     /* nhịp bất thường, bỏ qua */
     }
 
-    /* Quy ước accel của mạch, xem EST_ACCEL_Z_SIGN trong fc_config.h. */
-    const vec3f_t a = vec3f_scale(accel_mps2, (float)EST_ACCEL_Z_SIGN);
+    /* Quy ước accel của mạch, xem est_accel_z_sign. */
+    const vec3f_t a = vec3f_scale(accel_mps2, (float)g_params.est_accel_z_sign);
 
     if (!s_valid) {
         init_from_accel(a);

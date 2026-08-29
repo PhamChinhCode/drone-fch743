@@ -6,6 +6,7 @@
 #include "ctrl_rate.h"
 #include "mixer.h"
 #include "fc_state.h"
+#include "param_table.h"
 #include "fc_time.h"
 #include "stm32h7xx.h"
 
@@ -37,33 +38,53 @@ static uint32_t s_hz_count;
  * Khởi tạo
  * ========================================================================== */
 
-static void load_gains(void)
+/*
+ * Chep he so tu g_params sang cau truc PID.
+ *
+ * DAY LA MODULE DUY NHAT trong vong dieu khien con giu BAN SAO cua tham so.
+ * Ly do: vong nong duyet ba truc bang chi so mang (rate_pid[axis]) trong khi
+ * g_params la cac truong phang co ten rieng - khong lap chi muc duoc. Hai
+ * module kia (ctrl_angle, ctrl_poshold) doc thang g_params nen khong co gi
+ * phai dong bo.
+ *
+ * Vi co ban sao nen PHAI goi lai ham nay moi khi he so PID doi luc chay.
+ * param_apply.c lo viec do.
+ */
+void ctrl_rate_apply_params(void)
 {
     pid_gains_t *g;
 
     g = &g_fc.ctrl.rate_pid[AXIS_ROLL].gains;
-    g->kp = RATE_PID_ROLL_KP;
-    g->ki = RATE_PID_ROLL_KI;
-    g->kd = RATE_PID_ROLL_KD;
+    g->kp = g_params.rate_pid_roll_kp;
+    g->ki = g_params.rate_pid_roll_ki;
+    g->kd = g_params.rate_pid_roll_kd;
     g->kff = 0.0f;
-    g->i_limit   = RATE_PID_I_LIMIT;
-    g->out_limit = RATE_PID_OUT_LIMIT;
+    g->i_limit   = g_params.rate_pid_i_limit;
+    g->out_limit = g_params.rate_pid_out_limit;
 
     g = &g_fc.ctrl.rate_pid[AXIS_PITCH].gains;
-    g->kp = RATE_PID_PITCH_KP;
-    g->ki = RATE_PID_PITCH_KI;
-    g->kd = RATE_PID_PITCH_KD;
+    g->kp = g_params.rate_pid_pitch_kp;
+    g->ki = g_params.rate_pid_pitch_ki;
+    g->kd = g_params.rate_pid_pitch_kd;
     g->kff = 0.0f;
-    g->i_limit   = RATE_PID_I_LIMIT;
-    g->out_limit = RATE_PID_OUT_LIMIT;
+    g->i_limit   = g_params.rate_pid_i_limit;
+    g->out_limit = g_params.rate_pid_out_limit;
 
     g = &g_fc.ctrl.rate_pid[AXIS_YAW].gains;
-    g->kp = RATE_PID_YAW_KP;
-    g->ki = RATE_PID_YAW_KI;
-    g->kd = RATE_PID_YAW_KD;
+    g->kp = g_params.rate_pid_yaw_kp;
+    g->ki = g_params.rate_pid_yaw_ki;
+    g->kd = g_params.rate_pid_yaw_kd;
     g->kff = 0.0f;
-    g->i_limit   = RATE_PID_I_LIMIT;
-    g->out_limit = RATE_PID_OUT_LIMIT;
+    g->i_limit   = g_params.rate_pid_i_limit;
+    g->out_limit = g_params.rate_pid_out_limit;
+
+    /*
+     * He so loc D tinh san theo nhip danh dinh, tranh chia trong vong nong.
+     * Tinh lai o day chu khong chi trong init: doi rate_dterm_lpf_hz luc chay
+     * ma khong tinh lai thi tham so trong nhu da doi nhung khong co tac dung.
+     */
+    s_dterm_alpha = fc_lpf_alpha(g_params.rate_dterm_lpf_hz,
+                                 1.0f / (float)FC_LOOP_RATE_HZ);
 }
 
 void ctrl_rate_reset(void)
@@ -77,13 +98,36 @@ void ctrl_rate_reset(void)
     }
     s_dterm_primed = false;
 
-    g_fc.ctrl.pid_output       = (vec3f_t){ 0.0f, 0.0f, 0.0f };
-    g_fc.ctrl.setpoint_rate_dps = (vec3f_t){ 0.0f, 0.0f, 0.0f };
+    g_fc.ctrl.pid_output = (vec3f_t){ 0.0f, 0.0f, 0.0f };
+
+    /*
+     * KHÔNG xoá setpoint_rate_dps ở đây.
+     *
+     * Trường đó thuộc về ctrl_angle.c — vòng này chỉ ĐỌC nó. Hàm reset này
+     * chạy mỗi lần ctrl_rate_update() thấy máy bay chưa ARM, tức 2000 lần/giây,
+     * và ngay sau mỗi lần ctrl_angle_update() vừa ghi setpoint ở dòng trên nó
+     * trong cùng một vòng main(). Xoá ở đây biến một giá trị LIÊN TỤC thành
+     * chuỗi nhấp nháy.
+     *
+     * Đo thật trên đường truyền (mạch nằm yên trên bàn, chế độ ANGLE, vòng góc
+     * đòi -2,4 / -4,8 độ/giây để bù độ nghiêng dư): chỉ 41 trên 303 khung PID
+     * còn giữ giá trị thật, 262 khung mang số 0 giả.
+     *
+     * Hậu quả không chỉ là nhìn xấu. Mọi phép trung bình, RMS hay FFT tính
+     * trên log đều bị pha loãng bởi những số 0 đó, và việc kiểm cần điều khiển
+     * trên bàn — xem cần ra bao nhiêu độ/giây trước khi lắp cánh quạt — thành
+     * vô dụng.
+     *
+     * Bỏ dòng xoá này KHÔNG đổi hành vi bay: setpoint chỉ được DÙNG khi đã ARM,
+     * mà lúc đó ctrl_angle_update() vừa ghi lại nó ngay dòng trên trong cùng
+     * vòng lặp. Tích phân vẫn được xoá sạch như cũ nên vẫn không có chuyện dồn
+     * tích phân trước khi arm — đó mới là lý do hàm này tồn tại.
+     */
 }
 
 void ctrl_rate_init(void)
 {
-    load_gains();
+    ctrl_rate_apply_params();
     ctrl_rate_reset();
 
     s_last_sample = 0;
@@ -93,9 +137,6 @@ void ctrl_rate_init(void)
     s_hz          = 0;
     s_hz_mark_us  = s_last_us;
     s_hz_count    = 0;
-
-    /* Hệ số lọc D tính sẵn theo nhịp danh định, tránh chia trong vòng nóng. */
-    s_dterm_alpha = fc_lpf_alpha(RATE_DTERM_LPF_HZ, 1.0f / (float)FC_LOOP_RATE_HZ);
 }
 
 /* ==========================================================================

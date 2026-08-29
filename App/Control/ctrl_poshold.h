@@ -70,6 +70,12 @@ vec3f_t ctrl_poshold_velocity_body(void);
 vec3f_t ctrl_poshold_target_body(void);
 
 /** Phần đóng góp của khâu I, độ. */
+/** Mốc vị trí đang giữ, hệ NED. Chỉ có nghĩa khi ctrl_poshold_position_locked(). */
+vec3f_t ctrl_poshold_target_ned(void);
+
+/** true khi đang GIỮ CHỖ; false khi người lái đang cầm lái hoặc mất flow. */
+bool ctrl_poshold_position_locked(void);
+
 vec3f_t ctrl_poshold_integral_deg(void);
 
 #endif /* CTRL_POSHOLD_H */

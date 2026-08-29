@@ -45,6 +45,14 @@
 void mixer_init(void);
 
 /**
+ * Dung lai bang tron theo mix_yaw_sign trong g_params.
+ *
+ * Bang tron la mot BAN SAO dan xuat (giu dung san de vong nong khong phai
+ * nhan them), nen phai goi lai moi khi dau yaw doi. param_apply.c lo viec do.
+ */
+void mixer_apply_params(void);
+
+/**
  * Đọc g_fc.ctrl (pid_output + throttle_cmd) rồi ghi g_fc.motor.output_norm[].
  * Gọi trong vòng lặp chính, TRƯỚC dshot_update().
  *

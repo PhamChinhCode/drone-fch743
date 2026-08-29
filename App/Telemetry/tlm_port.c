@@ -214,6 +214,57 @@ void tlm_port_tx_complete_isr(void)
     tx_kick();                               /* nạp tiếp phần còn lại */
 }
 
+/* ==========================================================================
+ * Hàng đợi uplink của USB CDC
+ *
+ * KHÔNG nằm trong .dma_buffer: khối USB dùng FIFO riêng của nó, và dữ liệu
+ * tới đây đã được HAL chép sang UserRxBufferFS rồi. Đây chỉ là bộ nhớ thường.
+ *
+ * s_usb_head do ngắt USB ghi, s_usb_tail do vòng lặp chính ghi — mỗi biến
+ * một chủ nên không cần khoá ngắt, chỉ cần `volatile` cho biến bên kia.
+ * ========================================================================== */
+
+static tlm_port_type_t   s_last_rx = TLM_PORT_NONE;
+
+static uint8_t           s_usb_rx[TLM_RX_BUFFER_SIZE];
+static volatile uint16_t s_usb_head;
+static uint16_t          s_usb_tail;
+static volatile uint32_t s_usb_overruns;
+
+void tlm_port_usb_rx(const uint8_t *data, uint32_t len)
+{
+    if (data == NULL) {
+        return;
+    }
+
+    for (uint32_t i = 0; i < len; i++) {
+        const uint16_t next = (uint16_t)((s_usb_head + 1u) % TLM_RX_BUFFER_SIZE);
+
+        if (next == s_usb_tail) {
+            /*
+             * Đầy. Bỏ phần CÒN LẠI của cả khối chứ không chỉ byte này: khung
+             * đã cụt rồi thì chép thêm nửa khung vào chỉ làm parser tốn công
+             * đồng bộ lại. CRC sẽ loại nó, nhưng loại sớm thì rẻ hơn.
+             */
+            s_usb_overruns += (len - i);
+            return;
+        }
+
+        s_usb_rx[s_usb_head] = data[i];
+        s_usb_head = next;
+    }
+}
+
+uint32_t tlm_port_usb_overruns(void)
+{
+    return s_usb_overruns;
+}
+
+tlm_port_type_t tlm_port_last_rx(void)
+{
+    return s_last_rx;
+}
+
 void tlm_port_uart_error_isr(void)
 {
     /*
@@ -240,19 +291,40 @@ uint16_t tlm_port_read(uint8_t *dst, uint16_t max_len)
         return 0;
     }
 
-    if (s_port != TLM_PORT_UART) {
-        /* Đường USB nhận qua CDC_Receive_FS, xử lý ở usbd_cdc_if.c. */
-        return 0;
-    }
-
-    /* DMA vòng tròn đếm lùi: vị trí ghi hiện tại suy ra từ bộ đếm còn lại. */
-    const uint16_t dma_remaining = (uint16_t)__HAL_DMA_GET_COUNTER(&TLM_UART_DMA_RX);
-    const uint16_t head = (uint16_t)(TLM_RX_BUFFER_SIZE - dma_remaining);
-
     uint16_t n = 0;
-    while (s_rx_tail != head && n < max_len) {
-        dst[n++]  = s_rx_buf[s_rx_tail];
-        s_rx_tail = (uint16_t)((s_rx_tail + 1u) % TLM_RX_BUFFER_SIZE);
+
+    /*
+     * USB trước. Ngắt USB đã nạp sẵn vào ring buffer; ở đây chỉ rút ra.
+     *
+     * Rút BẤT KỂ đang phát ra đường nào — xem giải thích trong tlm_port.h.
+     */
+    {
+        const uint16_t head = s_usb_head;
+
+        while (s_usb_tail != head && n < max_len) {
+            dst[n++]   = s_usb_rx[s_usb_tail];
+            s_usb_tail = (uint16_t)((s_usb_tail + 1u) % TLM_RX_BUFFER_SIZE);
+            s_last_rx  = TLM_PORT_USB;
+        }
     }
+
+    /*
+     * Rồi tới UART. DMA vòng tròn đếm lùi: vị trí ghi hiện tại suy ra từ bộ
+     * đếm còn lại.
+     *
+     * Chỉ đọc khi DMA RX thật sự đang chạy — tlm_port_set() chỉ khởi động nó
+     * cho TLM_PORT_UART, đọc bộ đếm của một DMA chưa chạy sẽ ra số vô nghĩa.
+     */
+    if (s_port == TLM_PORT_UART) {
+        const uint16_t dma_remaining = (uint16_t)__HAL_DMA_GET_COUNTER(&TLM_UART_DMA_RX);
+        const uint16_t head = (uint16_t)(TLM_RX_BUFFER_SIZE - dma_remaining);
+
+        while (s_rx_tail != head && n < max_len) {
+            dst[n++]  = s_rx_buf[s_rx_tail];
+            s_rx_tail = (uint16_t)((s_rx_tail + 1u) % TLM_RX_BUFFER_SIZE);
+            s_last_rx = TLM_PORT_UART;
+        }
+    }
+
     return n;
 }

@@ -8,6 +8,7 @@
 #include "ekf_altitude.h"
 #include "ekf_velocity.h"
 #include "fc_state.h"
+#include "param_table.h"
 #include "fc_time.h"
 #include "stm32h7xx.h"
 
@@ -15,6 +16,12 @@ static uint32_t s_last_us;
 static bool     s_started;
 
 static uint32_t s_steps;
+
+/*
+ * Da co it nhat mot nhip flow hop le lien truoc chua. Xem cho tich phan vi tri
+ * o cuoi estimator_update() de biet vi sao can co nay.
+ */
+static bool     s_pos_primed;
 static uint32_t s_baro_updates;
 static uint32_t s_range_updates;
 static uint32_t s_range_rejected;
@@ -73,6 +80,8 @@ void estimator_init(void)
     g_fc.est.attitude_valid  = false;
     g_fc.est.altitude_valid  = false;
     g_fc.est.position_valid  = false;
+    g_fc.est.position_m      = (vec3f_t){ 0.0f, 0.0f, 0.0f };
+    s_pos_primed             = false;
 }
 
 bool estimator_update(uint32_t now_us)
@@ -122,7 +131,7 @@ bool estimator_update(uint32_t now_us)
      *   a_lên  = a_ned.z - g
      * Nằm yên: a_ned.z = g nên a_lên = 0. Bay lên 1 m/s²: a_ned.z = g + 1.
      */
-    const vec3f_t a_body = vec3f_scale(accel, (float)EST_ACCEL_Z_SIGN);
+    const vec3f_t a_body = vec3f_scale(accel, (float)g_params.est_accel_z_sign);
     const vec3f_t a_ned  = ekf_attitude_body_to_ned(a_body);
     const float   a_up   = a_ned.z - FC_GRAVITY_MPS2;
 
@@ -163,8 +172,8 @@ bool estimator_update(uint32_t now_us)
 
         if (s_flow_started) {
             const float fdt = (float)flow_dt_us * 1.0e-6f;
-            const float fx  = (float)g_fc.flow.flow_x_raw * FLOW_RAD_PER_COUNT;
-            const float fy  = (float)g_fc.flow.flow_y_raw * FLOW_RAD_PER_COUNT;
+            const float fx  = (float)g_fc.flow.flow_x_raw * g_params.flow_rad_per_count;
+            const float fy  = (float)g_fc.flow.flow_y_raw * g_params.flow_rad_per_count;
 
             (void)ekf_velocity_update_flow(fx, fy, g_fc.imu.gyro_dps, fdt,
                                            range_m, ekf_attitude_tilt_cos(),
@@ -191,13 +200,47 @@ bool estimator_update(uint32_t now_us)
     g_fc.est.velocity_mps.z = -g_fc.est.climb_rate_mps;
 
     /*
-     * Vận tốc ngang từ optical flow. Vị trí thì CHƯA — tích phân vận tốc sẽ
-     * trôi, và chưa có gì kiểm chứng được nó, nên position_valid vẫn là false
-     * cho tới khi bộ giữ vị trí được xây và kiểm.
+     * --- Vận tốc ngang từ optical flow, và vị trí suy ra từ nó ---
+     *
+     * Ý NGHĨA CỦA position_valid Ở ĐÂY: "dùng được để GIỮ CHỖ trong thời gian
+     * ngắn", KHÔNG phải "biết mình đang ở đâu".
+     *
+     * Vị trí này là tích phân của vận tốc, tức phép dẫn đường suy tính thuần
+     * tuý. Không có gì kiểm chứng nó nên sai số tích luỹ và KHÔNG BAO GIỜ tự
+     * hết. Bay lâu vài phút là gốc toạ độ đã trôi đi vài mét mà không ai biết.
+     *
+     * Vì sao vẫn dùng được cho giữ vị trí: vòng giữ chỗ chỉ cần biết "mình đã
+     * rời chỗ cũ bao xa" trong vài chục giây gần đây, và trên thang thời gian
+     * đó sai số tích luỹ còn nhỏ hơn nhiều so với chính chuyển động cần chặn.
+     * Mọi bộ giữ vị trí bằng optical flow đều làm đúng như vậy.
+     *
+     * TUYỆT ĐỐI KHÔNG dùng nó để bay về điểm xuất phát hay đi theo lộ trình —
+     * việc đó cần GPS hoặc một nguồn tuyệt đối khác.
      */
     g_fc.est.velocity_mps.x = ekf_velocity_north();
     g_fc.est.velocity_mps.y = ekf_velocity_east();
-    g_fc.est.position_valid = false;
+
+    if (ekf_velocity_is_valid()) {
+        /*
+         * Vừa lấy lại được flow sau khi mất: KHÔNG tích phân bước đầu tiên.
+         * dt đo từ lần chạy trước có thể dài hàng giây, nhân với vận tốc cũ
+         * sẽ ném vị trí đi rất xa chỉ trong một nhịp.
+         */
+        if (s_pos_primed) {
+            g_fc.est.position_m.x += g_fc.est.velocity_mps.x * dt;
+            g_fc.est.position_m.y += g_fc.est.velocity_mps.y * dt;
+        }
+        s_pos_primed            = true;
+        g_fc.est.position_valid = true;
+    } else {
+        /*
+         * Mất flow. Giữ nguyên vị trí đang có thay vì xoá về 0 — xoá đi thì
+         * lúc flow quay lại, vòng giữ chỗ thấy sai số nhảy vọt và giật máy bay.
+         * Chỉ hạ cờ để bên dùng tự quyết.
+         */
+        s_pos_primed            = false;
+        g_fc.est.position_valid = false;
+    }
 
     g_fc.est.timestamp_us = now_us;
     s_steps++;

@@ -7,6 +7,7 @@
 #include "qmc6309.h"
 #include "imu_noise.h"
 #include "fc_state.h"
+#include "param_table.h"
 #include "fc_time.h"
 #include "dbg_console.h"
 #include "main.h"
@@ -20,19 +21,51 @@ extern SPI_HandleTypeDef hspi3;
  * lsm6dsv_*_data_rate_get / lsm6dsv_*_full_scale_get).
  * ========================================================================== */
 
-#if   IMU2_ODR_HZ == 120
-  #define LSM_ODR_SEL   0x06u
-#elif IMU2_ODR_HZ == 240
-  #define LSM_ODR_SEL   0x07u
-#elif IMU2_ODR_HZ == 480
-  #define LSM_ODR_SEL   0x08u
-#elif IMU2_ODR_HZ == 960
-  #define LSM_ODR_SEL   0x09u
-#elif IMU2_ODR_HZ == 1920
-  #define LSM_ODR_SEL   0x0Au
-#else
-  #error "IMU2_ODR_HZ chi nhan 120, 240, 480, 960 hoac 1920"
-#endif
+/*
+ * ODR, dai do gyro va dai do accel deu la THAM SO RUNTIME nen khong con
+ * #error luc bien dich. Thay bang tra bang: gia tri khong nam trong bang
+ * duoc lam tron XUONG muc ho tro gan nhat.
+ *
+ * Moi dong chua CA bit thanh ghi LAN he so thang do, nen hai thu do khong
+ * the lech nhau - lech thi moi so do sai theo mot ti le co dinh, kieu sai
+ * rat kho thay vi khong co gi bao.
+ */
+typedef struct {
+    uint16_t value;        /* Hz, dps hoac g          */
+    uint8_t  sel;          /* bit ghi vao thanh ghi   */
+    float    per_lsb;      /* mdps/LSB hoac mg/LSB    */
+} lsm_level_t;
+
+static const lsm_level_t LSM_ODR[] = {
+    {  120u, 0x06u, 0.0f }, {  240u, 0x07u, 0.0f }, {  480u, 0x08u, 0.0f },
+    {  960u, 0x09u, 0.0f }, { 1920u, 0x0Au, 0.0f },
+};
+
+static const lsm_level_t LSM_GYRO_FS[] = {
+    {  125u, 0x00u,  4.375f }, {  250u, 0x01u,  8.75f },
+    {  500u, 0x02u, 17.50f },  { 1000u, 0x03u, 35.0f },
+    { 2000u, 0x04u, 70.0f },
+};
+
+static const lsm_level_t LSM_ACCEL_FS[] = {
+    {  2u, 0x00u, 0.061f }, {  4u, 0x01u, 0.122f },
+    {  8u, 0x02u, 0.244f }, { 16u, 0x03u, 0.488f },
+};
+
+/** Muc ho tro lon nhat KHONG vuot qua `want`; khong co thi lay muc thap nhat. */
+static const lsm_level_t *lsm_pick(const lsm_level_t *tab, size_t n, uint16_t want)
+{
+    const lsm_level_t *best = &tab[0];
+
+    for (size_t i = 0; i < n; i++) {
+        if (tab[i].value <= want) {
+            best = &tab[i];
+        }
+    }
+    return best;
+}
+
+#define LSM_N(tab)  (sizeof(tab) / sizeof((tab)[0]))
 
 /*
  * HỆ SỐ ĐỔI THANG — HAI HẰNG SỐ CẦN KIỂM CHỨNG THỰC TẾ
@@ -46,51 +79,21 @@ extern SPI_HandleTypeDef hspi3;
  *   Thang gyro  -> DBG_MODE_IMU_CMP, xoay bo bằng tay, hai cột gyro phải bám
  *                  nhau. Lệch theo tỉ lệ CỐ ĐỊNH nghĩa là hằng số này sai.
  */
-#if   IMU2_GYRO_FS_DPS == 125
-  #define LSM_GYRO_FS_SEL        0x00u
-  #define LSM_GYRO_MDPS_PER_LSB  4.375f
-#elif IMU2_GYRO_FS_DPS == 250
-  #define LSM_GYRO_FS_SEL        0x01u
-  #define LSM_GYRO_MDPS_PER_LSB  8.75f
-#elif IMU2_GYRO_FS_DPS == 500
-  #define LSM_GYRO_FS_SEL        0x02u
-  #define LSM_GYRO_MDPS_PER_LSB  17.50f
-#elif IMU2_GYRO_FS_DPS == 1000
-  #define LSM_GYRO_FS_SEL        0x03u
-  #define LSM_GYRO_MDPS_PER_LSB  35.0f
-#elif IMU2_GYRO_FS_DPS == 2000
-  #define LSM_GYRO_FS_SEL        0x04u
-  #define LSM_GYRO_MDPS_PER_LSB  70.0f
-#else
-  #error "IMU2_GYRO_FS_DPS chi nhan 125, 250, 500, 1000 hoac 2000"
-#endif
+/* Chot mot lan trong lsm6dsv_init(), tu chinh muc da ghi xuong chip. */
+static uint8_t s_odr_sel;
+static uint8_t s_gyro_fs_sel;
+static uint8_t s_accel_fs_sel;
 
-#if   IMU2_ACCEL_FS_G == 2
-  #define LSM_ACCEL_FS_SEL       0x00u
-  #define LSM_ACCEL_MG_PER_LSB   0.061f
-#elif IMU2_ACCEL_FS_G == 4
-  #define LSM_ACCEL_FS_SEL       0x01u
-  #define LSM_ACCEL_MG_PER_LSB   0.122f
-#elif IMU2_ACCEL_FS_G == 8
-  #define LSM_ACCEL_FS_SEL       0x02u
-  #define LSM_ACCEL_MG_PER_LSB   0.244f
-#elif IMU2_ACCEL_FS_G == 16
-  #define LSM_ACCEL_FS_SEL       0x03u
-  #define LSM_ACCEL_MG_PER_LSB   0.488f
-#else
-  #error "IMU2_ACCEL_FS_G chi nhan 2, 4, 8 hoac 16"
-#endif
-
-#define LSM_GYRO_SCALE   (LSM_GYRO_MDPS_PER_LSB * 0.001f)
-#define LSM_ACCEL_SCALE  (LSM_ACCEL_MG_PER_LSB  * 0.001f * FC_GRAVITY_MPS2)
+static float s_gyro_scale;
+static float s_accel_scale;
 
 /* Nhiệt độ: T[°C] = raw / 256 + 25. Khác ICM20602 (chia 326,8). */
 #define LSM_TEMP_SCALE   (1.0f / 256.0f)
 #define LSM_TEMP_OFFSET  25.0f
 
 /* Chế độ hiệu năng cao cho cả accel lẫn gyro là mã 0 ở bit 4-6. */
-#define LSM_CTRL1_VALUE  ((uint8_t)(LSM_ODR_SEL))
-#define LSM_CTRL2_VALUE  ((uint8_t)(LSM_ODR_SEL))
+#define LSM_CTRL1_VALUE  (s_odr_sel)
+#define LSM_CTRL2_VALUE  (s_odr_sel)
 
 /*
  * Điều khiển chân CS bằng thanh ghi BSRR — một lệnh ghi duy nhất, không đọc
@@ -212,9 +215,25 @@ bool lsm6dsv_init(void)
     memset(&s_cal, 0, sizeof(s_cal));
 
     /* Hệ số lọc tính sẵn theo ODR danh định, tránh chia trong ISR. */
-    const float dt = 1.0f / (float)IMU2_ODR_HZ;
-    s_gyro_alpha  = fc_lpf_alpha(IMU2_GYRO_LPF_HZ,  dt);
-    s_accel_alpha = fc_lpf_alpha(IMU2_ACCEL_LPF_HZ, dt);
+    /*
+     * Chot ODR va hai dai do TRUOC khi tinh he so loc: dt phai lay tu ODR
+     * THUC SU chon duoc, khong phai tu con so nguoi dung yeu cau.
+     */
+    const lsm_level_t *odr = lsm_pick(LSM_ODR, LSM_N(LSM_ODR), g_params.imu2_odr_hz);
+    const lsm_level_t *gfs = lsm_pick(LSM_GYRO_FS, LSM_N(LSM_GYRO_FS),
+                                      g_params.imu2_gyro_fs_dps);
+    const lsm_level_t *afs = lsm_pick(LSM_ACCEL_FS, LSM_N(LSM_ACCEL_FS),
+                                      g_params.imu2_accel_fs_g);
+
+    s_odr_sel      = odr->sel;
+    s_gyro_fs_sel  = gfs->sel;
+    s_accel_fs_sel = afs->sel;
+    s_gyro_scale   = gfs->per_lsb * 0.001f;
+    s_accel_scale  = afs->per_lsb * 0.001f * FC_GRAVITY_MPS2;
+
+    const float dt = 1.0f / (float)odr->value;
+    s_gyro_alpha  = fc_lpf_alpha(g_params.imu2_gyro_lpf_hz,  dt);
+    s_accel_alpha = fc_lpf_alpha(g_params.imu2_accel_lpf_hz, dt);
 
     imu_noise_reset(&s_noise, micros());
     s_hz            = 0;
@@ -280,8 +299,8 @@ bool lsm6dsv_init(void)
     }
 
     /* Dải đo trước, tốc độ sau — đổi dải khi đang chạy sẽ có vài mẫu rác. */
-    if (!reg_write_verify(LSM_REG_CTRL6, LSM_GYRO_FS_SEL) ||
-        !reg_write_verify(LSM_REG_CTRL8, LSM_ACCEL_FS_SEL)) {
+    if (!reg_write_verify(LSM_REG_CTRL6, s_gyro_fs_sel) ||
+        !reg_write_verify(LSM_REG_CTRL8, s_accel_fs_sel)) {
         goto fail;
     }
 
@@ -403,7 +422,7 @@ uint8_t lsm6dsv_calibration_progress(void)
     if (s_state != LSM_STATE_CALIBRATING) {
         return g_fc.imu2.calibrated ? 100u : 0u;
     }
-    return (uint8_t)((s_cal.count * 100u) / IMU2_CALIB_SAMPLE_COUNT);
+    return (uint8_t)((s_cal.count * 100u) / g_params.imu2_calib_sample_count);
 }
 
 /** Nạp một mẫu vào bộ tích luỹ bias. Gọi từ ISR. */
@@ -431,7 +450,8 @@ static void calibration_feed(const float gyro_body[AXIS_COUNT])
             const float mean = s_cal.sum[i] * inv;
             const float var  = s_cal.sumsq[i] * inv - mean * mean;
 
-            if (var > (IMU2_CALIB_MOVE_SD_DPS * IMU2_CALIB_MOVE_SD_DPS)) {
+            if (var > (g_params.imu2_calib_move_sd_dps *
+                       g_params.imu2_calib_move_sd_dps)) {
                 /*
                  * Bộ đếm này tăng KHÔNG NGỪNG nghĩa là nền nhiễu của chính con
                  * quay đã vượt ngưỡng, chứ không phải máy bay đang rung.
@@ -444,7 +464,7 @@ static void calibration_feed(const float gyro_body[AXIS_COUNT])
         }
     }
 
-    if (s_cal.count < IMU2_CALIB_SAMPLE_COUNT) {
+    if (s_cal.count < g_params.imu2_calib_sample_count) {
         return;
     }
 
@@ -469,12 +489,12 @@ static inline int16_t le16(const uint8_t *p)
     return (int16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
 }
 
-/** Xoay trục cảm biến sang trục thân theo IMU2_AXIS_MAP/SIGN. */
+/** Xoay truc cam bien sang truc than theo imu2_axis_map/sign. */
 static void align_axes(const float in[3], float out[AXIS_COUNT])
 {
-    out[AXIS_ROLL]  = (float)(IMU2_AXIS_SIGN_X) * in[IMU2_AXIS_MAP_X];
-    out[AXIS_PITCH] = (float)(IMU2_AXIS_SIGN_Y) * in[IMU2_AXIS_MAP_Y];
-    out[AXIS_YAW]   = (float)(IMU2_AXIS_SIGN_Z) * in[IMU2_AXIS_MAP_Z];
+    out[AXIS_ROLL]  = (float)g_params.imu2_axis_sign_x * in[g_params.imu2_axis_map_x];
+    out[AXIS_PITCH] = (float)g_params.imu2_axis_sign_y * in[g_params.imu2_axis_map_y];
+    out[AXIS_YAW]   = (float)g_params.imu2_axis_sign_z * in[g_params.imu2_axis_map_z];
 }
 
 static void process_sample(void)
@@ -504,14 +524,14 @@ static void process_sample(void)
 
     /* --- Đổi thang rồi xoay trục --- */
     const float gyro_sensor[3] = {
-        (float)gx_raw * LSM_GYRO_SCALE,
-        (float)gy_raw * LSM_GYRO_SCALE,
-        (float)gz_raw * LSM_GYRO_SCALE
+        (float)gx_raw * s_gyro_scale,
+        (float)gy_raw * s_gyro_scale,
+        (float)gz_raw * s_gyro_scale
     };
     const float accel_sensor[3] = {
-        (float)ax_raw * LSM_ACCEL_SCALE,
-        (float)ay_raw * LSM_ACCEL_SCALE,
-        (float)az_raw * LSM_ACCEL_SCALE
+        (float)ax_raw * s_accel_scale,
+        (float)ay_raw * s_accel_scale,
+        (float)az_raw * s_accel_scale
     };
 
     float gyro_body[AXIS_COUNT];
@@ -690,65 +710,73 @@ vec3f_t lsm6dsv_gyro_sigma_axes_dps(void)
 
 /* --- Đổi tham số cấu hình thành giá trị thanh ghi của QMC6309 --- */
 
-#if   MAG_RANGE_G == 8
-  #define MAG_RNG_SEL        QMC_RNG_8G
-  #define MAG_LSB_PER_GAUSS  QMC_LSB_PER_GAUSS_8G
-#elif MAG_RANGE_G == 16
-  #define MAG_RNG_SEL        QMC_RNG_16G
-  #define MAG_LSB_PER_GAUSS  QMC_LSB_PER_GAUSS_16G
-#elif MAG_RANGE_G == 32
-  #define MAG_RNG_SEL        QMC_RNG_32G
-  #define MAG_LSB_PER_GAUSS  QMC_LSB_PER_GAUSS_32G
-#else
-  #error "MAG_RANGE_G chi nhan 8, 16 hoac 32"
-#endif
+/*
+ * Dai do tu ke: cung khuon mau tra bang. Bit thanh ghi va he so LSB/Gauss di
+ * chung mot dong nen khong lech nhau duoc.
+ */
+static uint8_t s_mag_rng_sel;
+static float   s_mag_lsb_per_gauss;
+static uint8_t s_mag_odr_sel;
+static uint8_t s_mag_osr1_sel;
+static uint8_t s_mag_osr2_sel;
 
-#if   MAG_ODR_HZ == 1
-  #define MAG_ODR_SEL   QMC_ODR_1HZ
-#elif MAG_ODR_HZ == 10
-  #define MAG_ODR_SEL   QMC_ODR_10HZ
-#elif MAG_ODR_HZ == 50
-  #define MAG_ODR_SEL   QMC_ODR_50HZ
-#elif MAG_ODR_HZ == 100
-  #define MAG_ODR_SEL   QMC_ODR_100HZ
-#elif MAG_ODR_HZ == 200
-  #define MAG_ODR_SEL   QMC_ODR_200HZ
-#else
-  #error "MAG_ODR_HZ chi nhan 1, 10, 50, 100 hoac 200"
-#endif
+/*
+ * ODR va hai muc sieu lay mau cua QMC6309 cung chuyen sang tra bang luc chay.
+ * Gia tri khong nam trong bang duoc lam tron XUONG muc ho tro gan nhat.
+ */
+static void mag_pick_odr(uint16_t hz)
+{
+    if      (hz >= 200u) s_mag_odr_sel = QMC_ODR_200HZ;
+    else if (hz >= 100u) s_mag_odr_sel = QMC_ODR_100HZ;
+    else if (hz >=  50u) s_mag_odr_sel = QMC_ODR_50HZ;
+    else if (hz >=  10u) s_mag_odr_sel = QMC_ODR_10HZ;
+    else                 s_mag_odr_sel = QMC_ODR_1HZ;
+}
 
-#if   MAG_OSR1 == 8
-  #define MAG_OSR1_SEL  QMC_OSR1_8
-#elif MAG_OSR1 == 4
-  #define MAG_OSR1_SEL  QMC_OSR1_4
-#elif MAG_OSR1 == 2
-  #define MAG_OSR1_SEL  QMC_OSR1_2
-#elif MAG_OSR1 == 1
-  #define MAG_OSR1_SEL  QMC_OSR1_1
-#else
-  #error "MAG_OSR1 chi nhan 1, 2, 4 hoac 8"
-#endif
+static void mag_pick_osr(uint8_t osr1, uint8_t osr2)
+{
+    if      (osr1 >= 8u) s_mag_osr1_sel = QMC_OSR1_8;
+    else if (osr1 >= 4u) s_mag_osr1_sel = QMC_OSR1_4;
+    else if (osr1 >= 2u) s_mag_osr1_sel = QMC_OSR1_2;
+    else                 s_mag_osr1_sel = QMC_OSR1_1;
 
-#if   MAG_OSR2 == 1
-  #define MAG_OSR2_SEL  QMC_OSR2_1
-#elif MAG_OSR2 == 2
-  #define MAG_OSR2_SEL  QMC_OSR2_2
-#elif MAG_OSR2 == 4
-  #define MAG_OSR2_SEL  QMC_OSR2_4
-#elif MAG_OSR2 == 8
-  #define MAG_OSR2_SEL  QMC_OSR2_8
-#elif MAG_OSR2 == 16
-  #define MAG_OSR2_SEL  QMC_OSR2_16
-#else
-  #error "MAG_OSR2 chi nhan 1, 2, 4, 8 hoac 16"
-#endif
+    if      (osr2 >= 16u) s_mag_osr2_sel = QMC_OSR2_16;
+    else if (osr2 >=  8u) s_mag_osr2_sel = QMC_OSR2_8;
+    else if (osr2 >=  4u) s_mag_osr2_sel = QMC_OSR2_4;
+    else if (osr2 >=  2u) s_mag_osr2_sel = QMC_OSR2_2;
+    else                  s_mag_osr2_sel = QMC_OSR2_1;
+}
 
-/* Giá trị cuối cùng ghi vào hai thanh ghi điều khiển của QMC6309. */
-#define MAG_CTRL2_VALUE  ((uint8_t)(((MAG_ODR_SEL) << QMC_CTRL2_ODR_SHIFT) |  \
-                                    ((MAG_RNG_SEL) << QMC_CTRL2_RNG_SHIFT) |  \
+static void mag_pick_range(uint8_t want_g)
+{
+    if (want_g >= 32u) {
+        s_mag_rng_sel       = QMC_RNG_32G;
+        s_mag_lsb_per_gauss = QMC_LSB_PER_GAUSS_32G;
+    } else if (want_g >= 16u) {
+        s_mag_rng_sel       = QMC_RNG_16G;
+        s_mag_lsb_per_gauss = QMC_LSB_PER_GAUSS_16G;
+    } else {
+        s_mag_rng_sel       = QMC_RNG_8G;
+        s_mag_lsb_per_gauss = QMC_LSB_PER_GAUSS_8G;
+    }
+}
+
+
+
+
+/*
+ * Gia tri cuoi cung ghi vao hai thanh ghi dieu khien cua QMC6309.
+ *
+ * CTRL2 khong con la hang so bien dich: dai do la tham so runtime, va
+ * s_mag_rng_sel duoc mag_pick_range() dat trong lsm6dsv_mag_init() truoc khi
+ * macro nay duoc dung. Doc no truoc do se ra 0 (dai 8 G) - dung thu tu la
+ * dieu kien bat buoc, khong phai chuyen phong hoi.
+ */
+#define MAG_CTRL2_VALUE  ((uint8_t)(((s_mag_odr_sel) << QMC_CTRL2_ODR_SHIFT) | \
+                                    ((s_mag_rng_sel) << QMC_CTRL2_RNG_SHIFT) | \
                                      (QMC_SETRESET_ON)))
-#define MAG_CTRL1_VALUE  ((uint8_t)(((MAG_OSR2_SEL) << QMC_CTRL1_OSR2_SHIFT) | \
-                                    ((MAG_OSR1_SEL) << QMC_CTRL1_OSR1_SHIFT) | \
+#define MAG_CTRL1_VALUE  ((uint8_t)(((s_mag_osr2_sel) << QMC_CTRL1_OSR2_SHIFT) | \
+                                    ((s_mag_osr1_sel) << QMC_CTRL1_OSR1_SHIFT) | \
                                      (QMC_MODE_NORMAL)))
 
 /* Ba pha cho mot mau, nen nhip pha = 3 x nhip mau mong muon. */
@@ -920,7 +948,7 @@ static bool shub_write_reg(uint8_t addr7, uint8_t slave_reg, uint8_t value)
        * gian chờ, đường đọc đã nới shub_odr còn đường ghi thì chưa.
        */
       && reg_write(LSM_SH_SLV0_CONFIG,
-                   (uint8_t)((MAG_SHUB_ODR & 0x07u) << 5))
+                   (uint8_t)((g_params.mag_shub_odr & 0x07u) << 5))
       && reg_write(LSM_SH_MASTER_CONFIG,
                    (uint8_t)(LSM_SH_WRITE_ONCE | LSM_SH_MASTER_ON |
                              LSM_SH_AUX_SENS_ONE));
@@ -982,7 +1010,7 @@ static bool shub_read_regs(uint8_t addr7, uint8_t slave_reg, uint8_t *dst, uint8
     ok = reg_write(LSM_SH_SLV0_ADD, (uint8_t)((addr7 << 1) | LSM_SH_SLV0_READ))
       && reg_write(LSM_SH_SLV0_SUBADD, slave_reg)
       && reg_write(LSM_SH_SLV0_CONFIG,
-                   (uint8_t)((n & 0x07u) | ((MAG_SHUB_ODR & 0x07u) << 5)))
+                   (uint8_t)((n & 0x07u) | ((g_params.mag_shub_odr & 0x07u) << 5)))
       && reg_write(LSM_SH_MASTER_CONFIG,
                    (uint8_t)(LSM_SH_MASTER_ON | LSM_SH_AUX_SENS_ONE));
     (void)shub_bank(false);
@@ -1026,6 +1054,11 @@ static bool shub_read_regs(uint8_t addr7, uint8_t slave_reg, uint8_t *dst, uint8
 
 bool lsm6dsv_mag_init(void)
 {
+    /* Chot dai do, ODR va OSR TRUOC khi MAG_CTRL*_VALUE duoc dung o duoi. */
+    mag_pick_range(g_params.mag_range_g);
+    mag_pick_odr(g_params.mag_odr_hz);
+    mag_pick_osr(g_params.mag_osr1, g_params.mag_osr2);
+
     uint8_t id = 0;
 
     g_fc.mag.healthy    = false;
@@ -1229,7 +1262,7 @@ bool lsm6dsv_mag_update(uint32_t now_us)
             (void)reg_write(LSM_SH_SLV0_SUBADD, QMC_REG_XOUT_L);
             (void)reg_write(LSM_SH_SLV0_CONFIG,
                             (uint8_t)((QMC_DATA_LEN & 0x07u) |
-                                      ((MAG_SHUB_ODR & 0x07u) << 5)));
+                                      ((g_params.mag_shub_odr & 0x07u) << 5)));
             (void)reg_write(LSM_SH_MASTER_CONFIG,
                             (uint8_t)(LSM_SH_MASTER_ON | LSM_SH_AUX_SENS_ONE));
             (void)shub_bank(false);
@@ -1297,9 +1330,9 @@ bool lsm6dsv_mag_update(uint32_t now_us)
 
     /* --- Đổi thang, vẫn ở hệ CẢM BIẾN --- */
     const vec3f_t sensor_g = {
-        (float)rx / MAG_LSB_PER_GAUSS,
-        (float)ry / MAG_LSB_PER_GAUSS,
-        (float)rz / MAG_LSB_PER_GAUSS
+        (float)rx / s_mag_lsb_per_gauss,
+        (float)ry / s_mag_lsb_per_gauss,
+        (float)rz / s_mag_lsb_per_gauss
     };
 
     /*
@@ -1314,16 +1347,16 @@ bool lsm6dsv_mag_update(uint32_t now_us)
      * hai dòng dưới không đổi gì.
      */
     const float cal[3] = {
-        (sensor_g.x - MAG_OFFSET_X_G) * MAG_SCALE_X,
-        (sensor_g.y - MAG_OFFSET_Y_G) * MAG_SCALE_Y,
-        (sensor_g.z - MAG_OFFSET_Z_G) * MAG_SCALE_Z
+        (sensor_g.x - g_params.mag_offset_x_g) * g_params.mag_scale_x,
+        (sensor_g.y - g_params.mag_offset_y_g) * g_params.mag_scale_y,
+        (sensor_g.z - g_params.mag_offset_z_g) * g_params.mag_scale_z
     };
 
     /* --- Rồi mới xoay sang hệ thân --- */
     const vec3f_t field = {
-        (float)(MAG_AXIS_SIGN_X) * cal[MAG_AXIS_MAP_X],
-        (float)(MAG_AXIS_SIGN_Y) * cal[MAG_AXIS_MAP_Y],
-        (float)(MAG_AXIS_SIGN_Z) * cal[MAG_AXIS_MAP_Z]
+        (float)g_params.mag_axis_sign_x * cal[g_params.mag_axis_map_x],
+        (float)g_params.mag_axis_sign_y * cal[g_params.mag_axis_map_y],
+        (float)g_params.mag_axis_sign_z * cal[g_params.mag_axis_map_z]
     };
 
     s_mag_hz_count++;

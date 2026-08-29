@@ -58,6 +58,18 @@ bool tlm_stream_set_period(uint8_t msg_id, uint16_t period_ms);
 /** Áp dụng một bộ cấu hình dựng sẵn. */
 void tlm_stream_apply_profile(tlm_profile_t profile);
 
+/**
+ * Ghép và gửi một khung bất kỳ, dùng chung bộ đếm thứ tự với các luồng.
+ *
+ * Dành cho bản tin do lớp khác sinh ra (PARAM_VALUE, ACK, FC_INFO, CLI_LINE).
+ * Dùng chung s_seq là quan trọng: bên nhận phát hiện mất gói bằng chỗ đứt số
+ * thứ tự, mà hai bộ đếm song song thì chỗ đứt nào cũng thành giả.
+ *
+ * @return false nếu bộ đệm gửi không còn chỗ — gói bị BỎ HẲN, không gửi một
+ *         phần. Người gọi tự quyết định thử lại hay thôi.
+ */
+bool tlm_stream_send_payload(uint8_t msg_id, const void *payload, uint8_t len);
+
 /** Gửi ngay một bản tin, bỏ qua lịch (dùng cho sự kiện đột xuất). */
 bool tlm_stream_send_now(uint8_t msg_id);
 

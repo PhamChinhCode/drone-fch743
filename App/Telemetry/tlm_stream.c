@@ -5,6 +5,9 @@
 
 #include "tlm_stream.h"
 #include "tlm_port.h"
+#include "param_msg.h"
+#include "param_table.h"
+#include "param_apply.h"
 
 /** Số gói tối đa phát trong một lần gọi update, tránh dồn cục gây tràn đệm. */
 #define TLM_MAX_PACKETS_PER_UPDATE  4
@@ -331,6 +334,20 @@ void tlm_stream_apply_profile(tlm_profile_t profile)
     }
 }
 
+bool tlm_stream_send_payload(uint8_t msg_id, const void *payload, uint8_t len)
+{
+    uint8_t frame[TLM_FRAME_MAX];
+
+    const uint16_t n = tlm_frame_encode(frame, sizeof(frame),
+                                        msg_id, s_seq, payload, len);
+    if (n == 0 || !tlm_port_write(frame, n)) {
+        return false;
+    }
+
+    s_seq++;
+    return true;
+}
+
 bool tlm_stream_send_now(uint8_t msg_id)
 {
     const tlm_stream_t *st = stream_find(msg_id);
@@ -384,8 +401,38 @@ __attribute__((weak)) void fc_hook_reboot(void)          { }
 __attribute__((weak)) void fc_hook_log_start(void)       { }
 __attribute__((weak)) void fc_hook_log_stop(void)        { }
 
+/*
+ * 0x41 — nạp hệ số PID.
+ *
+ * LỆNH CŨ, GIỮ LẠI CHO TƯƠNG THÍCH. Phần mềm mới nên dùng
+ * TLM_MSG_CMD_PARAM_SET: nó ghi được mọi tham số, có ACK, và trả về giá trị
+ * firmware thực sự nhận.
+ *
+ * VÌ SAO PHẢI VIẾT LẠI: bản cũ ghi THẲNG vào g_fc.ctrl.rate_pid[]. Từ khi hệ
+ * số PID sống trong g_params, làm vậy tạo ra HAI nguồn ghi cho cùng một giá
+ * trị — và lần fc_params_apply() kế tiếp (do một lệnh `set` bất kỳ kích
+ * hoạt) sẽ lặng lẽ xoá sạch những gì lệnh này vừa ghi. Nay nó đi qua đúng
+ * đường như mọi thứ khác.
+ */
+static bool set_pid_param(const char *prefix, const char *suffix, float value)
+{
+    char name[PARAM_NAME_MAX];
+    size_t n = 0;
+
+    while (*prefix && n < sizeof(name) - 1u) name[n++] = *prefix++;
+    while (*suffix && n < sizeof(name) - 1u) name[n++] = *suffix++;
+    name[n] = '\0';
+
+    const uint16_t idx = param_find(name);
+    return (idx != PARAM_INDEX_NONE) && param_set_f32(idx, value);
+}
+
 static bool handle_set_pid(const uint8_t *payload, uint8_t len)
 {
+    static const char *const AXIS_PREFIX[AXIS_COUNT] = {
+        "rate_pid_roll_", "rate_pid_pitch_", "rate_pid_yaw_"
+    };
+
     if (len < sizeof(tlm_cmd_set_pid_t)) {
         return false;
     }
@@ -402,14 +449,27 @@ static bool handle_set_pid(const uint8_t *payload, uint8_t len)
         return false;
     }
 
-    pid_t *pid = (cmd.loop == 0) ? &g_fc.ctrl.rate_pid[cmd.axis]
-                                 : &g_fc.ctrl.angle_pid[cmd.axis];
-    pid->gains.kp  = cmd.kp;
-    pid->gains.ki  = cmd.ki;
-    pid->gains.kd  = cmd.kd;
-    pid->gains.kff = cmd.kff;
-    pid->integral  = 0.0f;
-    return true;
+    bool ok;
+
+    if (cmd.loop == 0) {
+        ok  = set_pid_param(AXIS_PREFIX[cmd.axis], "kp", cmd.kp);
+        ok &= set_pid_param(AXIS_PREFIX[cmd.axis], "ki", cmd.ki);
+        ok &= set_pid_param(AXIS_PREFIX[cmd.axis], "kd", cmd.kd);
+    } else {
+        /*
+         * Vòng góc cố ý CHỈ CÓ P và dùng CHUNG một hệ số cho cả roll lẫn
+         * pitch — xem ghi chú dài trong fc_config.h về việc vì sao không có
+         * I và D ở đây. Nên ki/kd/kff của lệnh này bị bỏ qua, và ba trục đều
+         * ghi vào cùng một tham số.
+         */
+        const uint16_t idx = param_find("angle_pid_kp");
+        ok = (idx != PARAM_INDEX_NONE) && param_set_f32(idx, cmd.kp);
+    }
+
+    if (ok) {
+        fc_params_apply();
+    }
+    return ok;
 }
 
 static bool handle_action(const uint8_t *payload, uint8_t len)
@@ -491,6 +551,11 @@ bool tlm_stream_handle_command(const tlm_parser_t *p)
         return handle_action(p->payload, p->len);
 
     default:
-        return false;
+        /*
+         * Nhom lenh tham so / CLI / motor test do param_msg.c lo. De o day
+         * thay vi liet ke tung ma lenh: them mot lenh moi chi phai sua mot
+         * file, va file nay khong can biet nhom do co bao nhieu lenh.
+         */
+        return param_msg_handle(p);
     }
 }

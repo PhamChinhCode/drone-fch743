@@ -5,6 +5,7 @@
  */
 
 #include "dshot.h"
+#include "param_table.h"
 #include "fc_state.h"
 #include "fc_time.h"
 #include "main.h"
@@ -24,10 +25,14 @@ extern DMA_HandleTypeDef hdma_tim1_up;
 
 FC_DMA_BUFFER static uint32_t s_dma[DSHOT_BUFFER_LEN * FC_MOTOR_COUNT];
 
-/** Motor thứ n ra kênh TIM1 nào (0 = CCR1 ... 3 = CCR4). */
-static const uint8_t s_motor_map[FC_MOTOR_COUNT] = {
-    DSHOT_MOTOR_MAP_1, DSHOT_MOTOR_MAP_2, DSHOT_MOTOR_MAP_3, DSHOT_MOTOR_MAP_4
-};
+/**
+ * Motor thu n ra kenh TIM1 nao (0 = CCR1 ... 3 = CCR4).
+ *
+ * KHONG con `const`: dung lai tu g_params trong dshot_apply_params(). Giu
+ * dang mang tra san thay vi doc g_params o cho dung, vi mang nay duoc doc
+ * trong vong dung khung DShot chay 1000 lan moi giay cho tung bit.
+ */
+static uint8_t s_motor_map[FC_MOTOR_COUNT] = { 0u, 1u, 2u, 3u };
 
 static volatile bool s_busy;        /* một lượt DMA đang chạy dở        */
 static bool          s_ready;       /* init đã xong                     */
@@ -54,22 +59,56 @@ static uint32_t s_test_start_us;
 static uint32_t s_test_len_us;
 
 /*
- * Mức ga ứng với output_norm = 0 — tức lúc đã arm nhưng cần ga ở đáy.
- * Đây KHÔNG phải DSHOT_MIN_THROTTLE; xem DSHOT_IDLE_PERCENT trong fc_config.h.
- * Với 5,5 % thì giá trị này là 48 + 0,055 × 1999 ≈ 158.
+ * Muc ga ung voi output_norm = 0 - tuc luc da arm nhung can ga o day.
+ * Day KHONG phai DSHOT_MIN_THROTTLE; xem dshot_idle_percent.
+ * Voi 5,5 % thi gia tri nay la 48 + 0,055 x 1999 ~ 158.
  */
-static const float s_idle_value =
-    (float)DSHOT_MIN_THROTTLE +
-    (DSHOT_IDLE_PERCENT * 0.01f) *
-        (float)(DSHOT_MAX_THROTTLE - DSHOT_MIN_THROTTLE);
+static float s_idle_value;
 
 /*
- * Độ rộng xung phải nằm trong chu kỳ, nếu không đường tín hiệu kẹt ở mức cao.
- * Chặn ngay lúc biên dịch thay vì để phát hiện bằng cách nhìn motor không quay.
+ * Do rong xung, tinh tu toc do bit luc chay.
+ *
+ * Truoc day la hang so bien dich kem mot #error chan truong hop T1H >= ARR.
+ * Toc do bit gio la tham so runtime nen phep chan chuyen vao
+ * dshot_apply_params() - va no VAN PHAI CO: T1H vuot ARR thi duong tin hieu
+ * ket o muc cao, ESC coi nhu mat tin hieu, va bieu hien duy nhat ra ngoai la
+ * motor khong quay.
  */
-#if DSHOT_T1H >= DSHOT_ARR
-  #error "DSHOT_T1H vuot qua ARR - kiem tra lai DSHOT_BITRATE_HZ trong fc_config.h"
-#endif
+static uint32_t s_arr;
+static uint32_t s_t0h;
+static uint32_t s_t1h;
+
+void dshot_apply_params(void)
+{
+    s_motor_map[0] = g_params.dshot_motor_map_1;
+    s_motor_map[1] = g_params.dshot_motor_map_2;
+    s_motor_map[2] = g_params.dshot_motor_map_3;
+    s_motor_map[3] = g_params.dshot_motor_map_4;
+
+    s_idle_value = (float)DSHOT_MIN_THROTTLE +
+                   (g_params.dshot_idle_percent * 0.01f) *
+                       (float)(DSHOT_MAX_THROTTLE - DSHOT_MIN_THROTTLE);
+
+    /*
+     * Cung cong thuc voi DSHOT_ARR / DSHOT_T0H / DSHOT_T1H trong fc_config.h,
+     * chi khac la lay toc do bit tu g_params.
+     *
+     * 37,5 % chu ky cho bit 0 va 75 % cho bit 1 - dung chuan DShot.
+     */
+    const uint32_t bitrate = (g_params.dshot_bitrate_hz > 0u)
+                           ? g_params.dshot_bitrate_hz : DSHOT_BITRATE_HZ;
+
+    s_arr = (FC_TIMER_CLK_HZ / bitrate) - 1u;
+    s_t0h = ((s_arr + 1u) * 375u) / 1000u;
+    s_t1h = ((s_arr + 1u) * 750u) / 1000u;
+
+    if (s_t1h >= s_arr) {
+        /* Bo tham so vo ly - lui ve toc do bien dich da duoc thu thuc te. */
+        s_arr = DSHOT_ARR;
+        s_t0h = DSHOT_T0H;
+        s_t1h = DSHOT_T1H;
+    }
+}
 
 /* ==========================================================================
  * Dựng khung
@@ -110,7 +149,7 @@ static void fill_buffer(const uint16_t value[FC_MOTOR_COUNT], bool telemetry)
         for (uint32_t b = 0; b < DSHOT_FRAME_BITS; b++) {
             const uint16_t mask = (uint16_t)(1u << (DSHOT_FRAME_BITS - 1u - b));
             s_dma[b * FC_MOTOR_COUNT + ch] =
-                ((frame & mask) != 0u) ? (uint32_t)DSHOT_T1H : (uint32_t)DSHOT_T0H;
+                ((frame & mask) != 0u) ? s_t1h : s_t0h;
         }
 
         /* Khoảng lặng cuối khung: CCR = 0 nên đường giữ mức thấp. */
@@ -157,6 +196,9 @@ static void start_transfer(void)
 
 bool dshot_init(void)
 {
+    /* Chot map motor, muc ga day va nhip bit TRUOC khi cham vao timer. */
+    dshot_apply_params();
+
     /* Section .dma_buffer là NOLOAD nên không được startup code xoá. */
     memset(s_dma, 0, sizeof(s_dma));
 
@@ -212,7 +254,7 @@ bool dshot_init(void)
      * Ghi lại ARR ở đây để fc_config.h thành nguồn sự thật duy nhất: đổi tốc
      * độ DShot chỉ cần sửa đúng một dòng, không phải mở CubeMX.
      */
-    __HAL_TIM_SET_AUTORELOAD(&htim1, DSHOT_ARR);
+    __HAL_TIM_SET_AUTORELOAD(&htim1, s_arr);
     TIM1->EGR  = TIM_EGR_UG;      /* nạp ARR ngay, bộ đếm còn đang dừng */
     TIM1->SR  &= ~TIM_SR_UIF;     /* xoá cờ mà lệnh UG vừa dựng lên     */
 

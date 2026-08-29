@@ -6,6 +6,7 @@
 #include "icm20602.h"
 #include "imu_noise.h"
 #include "fc_state.h"
+#include "param_table.h"
 #include "fc_time.h"
 #include "main.h"
 
@@ -15,29 +16,43 @@ extern SPI_HandleTypeDef hspi1;
  * Chuyển tham số cấu hình thành giá trị thanh ghi
  * ========================================================================== */
 
-#if   IMU_GYRO_FS_DPS == 250
-  #define ICM_GYRO_FS_SEL   0u
-#elif IMU_GYRO_FS_DPS == 500
-  #define ICM_GYRO_FS_SEL   1u
-#elif IMU_GYRO_FS_DPS == 1000
-  #define ICM_GYRO_FS_SEL   2u
-#elif IMU_GYRO_FS_DPS == 2000
-  #define ICM_GYRO_FS_SEL   3u
-#else
-  #error "IMU_GYRO_FS_DPS chi nhan 250, 500, 1000 hoac 2000"
-#endif
+/*
+ * Dai do gio la THAM SO RUNTIME nen viec chon bit thanh ghi phai lam luc
+ * chay, khong con #error luc bien dich duoc nua.
+ *
+ * Doi lai bang cach KHAC: gia tri khong hop le KHONG bi tu choi im lang ma
+ * duoc lam tron XUONG muc hop le gan nhat, va ham tra ve luon di doi voi
+ * ham tinh thang do ben duoi - hai thu nay doc cung mot bang nen khong the
+ * lech nhau. Dat 700 dps thi chip chay 500 dps VA thang do cung la 500.
+ *
+ * (min/max trong param_list.h da chan ngoai dai; day chan not cac gia tri
+ * nam trong dai nhung khong phai muc chip ho tro.)
+ */
+typedef struct {
+    uint16_t value;   /* dps hoac g */
+    uint8_t  fs_sel;  /* bit 4..3 cua thanh ghi CONFIG */
+} icm_fs_entry_t;
 
-#if   IMU_ACCEL_FS_G == 2
-  #define ICM_ACCEL_FS_SEL  0u
-#elif IMU_ACCEL_FS_G == 4
-  #define ICM_ACCEL_FS_SEL  1u
-#elif IMU_ACCEL_FS_G == 8
-  #define ICM_ACCEL_FS_SEL  2u
-#elif IMU_ACCEL_FS_G == 16
-  #define ICM_ACCEL_FS_SEL  3u
-#else
-  #error "IMU_ACCEL_FS_G chi nhan 2, 4, 8 hoac 16"
-#endif
+static const icm_fs_entry_t ICM_GYRO_FS[] = {
+    { 250u, 0u }, { 500u, 1u }, { 1000u, 2u }, { 2000u, 3u },
+};
+static const icm_fs_entry_t ICM_ACCEL_FS[] = {
+    { 2u, 0u }, { 4u, 1u }, { 8u, 2u }, { 16u, 3u },
+};
+
+/** Muc ho tro lon nhat KHONG vuot qua `want`; khong co thi lay muc thap nhat. */
+static const icm_fs_entry_t *fs_pick(const icm_fs_entry_t *tab, size_t n,
+                                     uint16_t want)
+{
+    const icm_fs_entry_t *best = &tab[0];
+
+    for (size_t i = 0; i < n; i++) {
+        if (tab[i].value <= want) {
+            best = &tab[i];
+        }
+    }
+    return best;
+}
 
 /*
  * DLPF_CFG = 0 kèm FCHOICE_B = 00: băng thông gyro 250 Hz, tốc độ ra 8 kHz.
@@ -46,9 +61,17 @@ extern SPI_HandleTypeDef hspi1;
 #define ICM_GYRO_DLPF_CFG   0u
 #define ICM_ACCEL_DLPF_CFG  0u    /* băng thông accel 218,1 Hz, ODR 1 kHz */
 
-/* Hệ số đổi thang: giá trị thô 16-bit có dấu -> đơn vị vật lý. */
-#define ICM_GYRO_SCALE   ((float)IMU_GYRO_FS_DPS / 32768.0f)
-#define ICM_ACCEL_SCALE  (((float)IMU_ACCEL_FS_G / 32768.0f) * FC_GRAVITY_MPS2)
+/*
+ * He so doi thang: gia tri tho 16-bit co dau -> don vi vat ly.
+ *
+ * Truoc day la macro hang so. Gio la bien tinh san trong icm20602_init(),
+ * lay tu CHINH muc dai do da ghi vao chip - khong phai tu tham so nguoi dung
+ * yeu cau. Neu hai thu nay lech nhau thi moi so do deu sai theo mot ti le co
+ * dinh, va do la kieu sai rat kho phat hien vi may bay van bay, chi la sai
+ * he so PID.
+ */
+static float s_gyro_scale;
+static float s_accel_scale;
 
 /* Nhiệt độ: T[°C] = raw / 326,8 + 25 (theo datasheet mục 4.20). */
 #define ICM_TEMP_SCALE   (1.0f / 326.8f)
@@ -81,6 +104,8 @@ static uint32_t          s_overrun_count;   /* DRDY tới khi DMA chưa xong  */
 
 static float s_gyro_alpha;                  /* hệ số lọc gyro              */
 static float s_accel_alpha;
+static uint8_t s_gyro_fs_sel;               /* bit dai do da ghi vao chip  */
+static uint8_t s_accel_fs_sel;
 
 #if IMU_NOISE_STATS_ENABLE
 /* Nen nhieu gyro, phuc vu so sanh voi LSM6DSV o giai doan 2.
@@ -168,8 +193,24 @@ bool icm20602_init(void)
 
     /* Hệ số lọc tính sẵn theo tốc độ lấy mẫu danh định, tránh chia trong ISR. */
     const float dt = 1.0f / (float)IMU_SAMPLE_RATE_HZ;
-    s_gyro_alpha  = fc_lpf_alpha(IMU_GYRO_LPF_HZ,  dt);
-    s_accel_alpha = fc_lpf_alpha(IMU_ACCEL_LPF_HZ, dt);
+    s_gyro_alpha  = fc_lpf_alpha(g_params.imu_gyro_lpf_hz,  dt);
+    s_accel_alpha = fc_lpf_alpha(g_params.imu_accel_lpf_hz, dt);
+
+    /*
+     * Chot dai do MOT LAN o day. Thang do tinh tu muc that su duoc chon, nen
+     * no khong the lech khoi thanh ghi da ghi xuong chip.
+     */
+    const icm_fs_entry_t *gfs = fs_pick(ICM_GYRO_FS,
+                                        sizeof(ICM_GYRO_FS) / sizeof(ICM_GYRO_FS[0]),
+                                        g_params.imu_gyro_fs_dps);
+    const icm_fs_entry_t *afs = fs_pick(ICM_ACCEL_FS,
+                                        sizeof(ICM_ACCEL_FS) / sizeof(ICM_ACCEL_FS[0]),
+                                        g_params.imu_accel_fs_g);
+
+    s_gyro_fs_sel  = gfs->fs_sel;
+    s_accel_fs_sel = afs->fs_sel;
+    s_gyro_scale   = (float)gfs->value / 32768.0f;
+    s_accel_scale  = ((float)afs->value / 32768.0f) * FC_GRAVITY_MPS2;
 
 #if IMU_NOISE_STATS_ENABLE
     imu_noise_reset(&s_noise, micros());
@@ -228,8 +269,8 @@ bool icm20602_init(void)
     if (!reg_write_verify(ICM_REG_PWR_MGMT_2,    0x00u) ||   /* bật đủ 6 trục   */
         !reg_write_verify(ICM_REG_CONFIG,        ICM_GYRO_DLPF_CFG) ||
         !reg_write_verify(ICM_REG_SMPLRT_DIV,    0x00u) ||
-        !reg_write_verify(ICM_REG_GYRO_CONFIG,   (uint8_t)(ICM_GYRO_FS_SEL << 3)) ||
-        !reg_write_verify(ICM_REG_ACCEL_CONFIG,  (uint8_t)(ICM_ACCEL_FS_SEL << 3)) ||
+        !reg_write_verify(ICM_REG_GYRO_CONFIG,   (uint8_t)(s_gyro_fs_sel << 3)) ||
+        !reg_write_verify(ICM_REG_ACCEL_CONFIG,  (uint8_t)(s_accel_fs_sel << 3)) ||
         !reg_write_verify(ICM_REG_ACCEL_CONFIG2, ICM_ACCEL_DLPF_CFG) ||
         !reg_write_verify(ICM_REG_FIFO_EN,       0x00u)) {   /* không dùng FIFO */
         goto fail;
@@ -312,7 +353,7 @@ uint8_t icm20602_calibration_progress(void)
     if (s_state != ICM_STATE_CALIBRATING) {
         return g_fc.imu.calibrated ? 100u : 0u;
     }
-    return (uint8_t)((s_cal.count * 100u) / IMU_CALIB_SAMPLE_COUNT);
+    return (uint8_t)((s_cal.count * 100u) / g_params.imu_calib_sample_count);
 }
 
 /** Nạp một mẫu vào bộ tích luỹ. Trả về true khi đã đủ số mẫu. */
@@ -326,7 +367,7 @@ static void calibration_feed(const float gyro[AXIS_COUNT])
 
     /*
      * Máy bay chưa đứng yên thì bias tính ra sẽ lệch. Đo bằng ĐỘ LỆCH CHUẨN,
-     * không phải biên độ đỉnh-đỉnh — xem IMU_CALIB_MOVE_SD_DPS trong
+     * không phải biên độ đỉnh-đỉnh — xem imu_calib_move_sd_dps trong
      * fc_config.h để biết vì sao.
      *
      * So bình phương với bình phương để khỏi phải gọi sqrtf trong ISR 8 kHz.
@@ -338,14 +379,15 @@ static void calibration_feed(const float gyro[AXIS_COUNT])
             const float mean = s_cal.sum[i] * inv;
             const float var  = s_cal.sumsq[i] * inv - mean * mean;
 
-            if (var > (IMU_CALIB_MOVE_SD_DPS * IMU_CALIB_MOVE_SD_DPS)) {
+            if (var > (g_params.imu_calib_move_sd_dps *
+                       g_params.imu_calib_move_sd_dps)) {
                 memset(&s_cal, 0, sizeof(s_cal));
                 return;
             }
         }
     }
 
-    if (s_cal.count >= IMU_CALIB_SAMPLE_COUNT) {
+    if (s_cal.count >= g_params.imu_calib_sample_count) {
         const float inv = 1.0f / (float)s_cal.count;
         g_fc.imu.gyro_bias_dps.x = s_cal.sum[AXIS_ROLL]  * inv;
         g_fc.imu.gyro_bias_dps.y = s_cal.sum[AXIS_PITCH] * inv;
@@ -367,13 +409,17 @@ static inline int16_t be16(const uint8_t *p)
 
 /**
  * Xoay từ hệ trục cảm biến sang hệ trục thân máy bay.
- * Cấu hình bằng IMU_AXIS_MAP_* và IMU_AXIS_SIGN_* trong fc_config.h.
+ * Cau hinh bang imu_axis_map_* va imu_axis_sign_*, doi duoc luc chay.
+ *
+ * Doc thang g_params trong ham chay o 8 kHz: doc mot truong toan cuc dung
+ * bang chi phi doc mot hang so tu flash, va doi lai la khong co ban sao nao
+ * de quen dong bo.
  */
 static inline void align_axes(const float in[3], float out[3])
 {
-    out[AXIS_ROLL]  = (float)(IMU_AXIS_SIGN_X) * in[IMU_AXIS_MAP_X];
-    out[AXIS_PITCH] = (float)(IMU_AXIS_SIGN_Y) * in[IMU_AXIS_MAP_Y];
-    out[AXIS_YAW]   = (float)(IMU_AXIS_SIGN_Z) * in[IMU_AXIS_MAP_Z];
+    out[AXIS_ROLL]  = (float)g_params.imu_axis_sign_x * in[g_params.imu_axis_map_x];
+    out[AXIS_PITCH] = (float)g_params.imu_axis_sign_y * in[g_params.imu_axis_map_y];
+    out[AXIS_YAW]   = (float)g_params.imu_axis_sign_z * in[g_params.imu_axis_map_z];
 }
 
 static void process_sample(void)
@@ -398,14 +444,14 @@ static void process_sample(void)
 
     /* --- Đổi thang rồi xoay trục --- */
     const float gyro_sensor[3] = {
-        (float)gx_raw * ICM_GYRO_SCALE,
-        (float)gy_raw * ICM_GYRO_SCALE,
-        (float)gz_raw * ICM_GYRO_SCALE
+        (float)gx_raw * s_gyro_scale,
+        (float)gy_raw * s_gyro_scale,
+        (float)gz_raw * s_gyro_scale
     };
     const float accel_sensor[3] = {
-        (float)ax_raw * ICM_ACCEL_SCALE,
-        (float)ay_raw * ICM_ACCEL_SCALE,
-        (float)az_raw * ICM_ACCEL_SCALE
+        (float)ax_raw * s_accel_scale,
+        (float)ay_raw * s_accel_scale,
+        (float)az_raw * s_accel_scale
     };
 
     float gyro_body[3];

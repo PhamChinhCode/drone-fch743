@@ -39,8 +39,13 @@
 #include "dbg_console.h"
 #include "tlm_port.h"
 #include "tlm_stream.h"
+#include "param_msg.h"
 #include "blackbox.h"
 #include "usb_msc.h"
+#include "param_table.h"
+#include "param_store.h"
+#include "cli.h"
+#include "param_apply.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -102,9 +107,8 @@ DMA_HandleTypeDef hdma_usart3_tx;
  * Danh dau dang o trong MX_SDMMC1_SD_Init(). Xem Error_Handler() de biet vi sao.
  */
 volatile bool g_sd_init_in_progress = false;
-volatile bool g_sd_init_failed      = false;
-volatile uint8_t g_sd_retry_count   = 0;   /* 0 = an ngay lan dau */
-
+volatile bool g_sd_init_failed = false;
+volatile uint8_t g_sd_retry_count = 0; /* 0 = an ngay lan dau */
 
 /* USER CODE END PV */
 
@@ -142,9 +146,9 @@ static void MX_SPI3_Init(void);
 /* USER CODE END 0 */
 
 /**
-  * @brief  The application entry point.
-  * @retval int
-  */
+ * @brief  The application entry point.
+ * @retval int
+ */
 int main(void)
 {
 
@@ -184,8 +188,20 @@ int main(void)
   MX_MDMA_Init();
   MX_DMA_Init();
   MX_QUADSPI_Init();
+#if FC_SD_ENABLE
   MX_SDMMC1_SD_Init();
   MX_FATFS_Init();
+#else
+  /*
+   * BO QUA the SD — xem FC_SD_ENABLE trong fc_config.h.
+   *
+   * HAL_SD_Init() voi the hien tai KHONG TRA VE: no quay vong trong
+   * SD_SendSDStatus(). Goi no o day nghia la main() dung lai NGAY TAI DONG
+   * NAY, va moi thu phia sau — telemetry, CLI, cam bien, dieu khien — khong
+   * bao gio khoi dong. Mot cai the hong lam liet ca mach bay.
+   */
+  g_sd_init_failed = true;
+#endif
   MX_USB_DEVICE_Init();
   MX_I2C1_Init();
   MX_SPI1_Init();
@@ -219,6 +235,7 @@ int main(void)
    * KHONG cuu duoc truong hop the ket cung tu lan chay truoc - cai do phai
    * RUT HAN NGUON, vi reset khong cat dien cho the.
    */
+#if FC_SD_ENABLE
   if (g_sd_init_failed)
   {
     for (int attempt = 1; attempt <= 3 && g_sd_init_failed; attempt++)
@@ -227,12 +244,28 @@ int main(void)
       (void)HAL_SD_DeInit(&hsd1);
 
       g_sd_init_in_progress = true;
-      g_sd_init_failed      = (HAL_SD_Init(&hsd1) != HAL_OK);
+      g_sd_init_failed = (HAL_SD_Init(&hsd1) != HAL_OK);
       g_sd_init_in_progress = false;
 
       g_sd_retry_count = (uint8_t)attempt;
     }
   }
+#endif
+
+  /*
+   * Tham so chinh duoc luc chay. PHAI nam TRUOC MOI ham *_init() khac -
+   * fc_state_init() va cac driver deu doc g_params ngay trong than ham init
+   * cua chung. Nap muon mot nhip thi chung doc phai vung .bss toan so 0.
+   *
+   * Console chua chay o day nen ket qua duoc GIU LAI, in ra ngay sau khi
+   * dbg_console_init(). Doi lai: chinh console khong the la tham so runtime -
+   * chap nhan duoc, no la cong cu go loi chu khong phai thu chinh khi bay.
+   *
+   * Nap that bai thi g_params giu nguyen mac dinh tu fc_config.h, may bay van
+   * bay duoc, chi mat phan tinh chinh.
+   */
+  param_load_defaults();
+  const param_store_result_t param_load_result = param_store_load();
 
   fc_state_init();
   fc_time_init(); /* TIM2 chay -> micros() dung duoc */
@@ -248,6 +281,29 @@ int main(void)
   dbg_console_set_rate(50);
 
   /*
+   * Bao ket qua nap tham so (da chay o tren, truoc fc_state_init()).
+   *
+   * Dong "DUNG MAC DINH" la thu DUY NHAT cho biet cau hinh da mat - dung bo
+   * qua no. Ly do cu the nam o dong ket qua ngay duoi.
+   */
+  dbg_println(param_load_result == PARAM_STORE_OK ? "Cau hinh: nap tu flash"
+                                                  : "Cau hinh: DUNG MAC DINH");
+  dbg_print_int("  so tham so", (int32_t)g_param_count);
+  dbg_print_int("  seq", (int32_t)param_store_seq());
+  dbg_print_hex("  table_crc", param_table_crc32(), 8);
+  dbg_println(param_store_result_name(param_load_result));
+
+  /*
+   * Dong lenh chinh tham so. Dung chung UART voi console: USART1 RX (PA10)
+   * qua DMA2_Stream0 vong tron, stream ma CubeMX da cau hinh san tu truoc
+   * nhung chua ai dung.
+   *
+   * Go 'help' trong PuTTY o 921600 baud de bat dau.
+   */
+  cli_init(&huart1);
+  dbg_println("CLI san sang - go 'help'.");
+
+  /*
    * In trang thai hai nut ngay luc khoi dong.
    *
    * Ca hai deu la muc thap khi nhan (co dien tro keo len noi). Che do doc the
@@ -256,9 +312,9 @@ int main(void)
    * firmware da doc duoc gi, khong phai ngoi doan.
    */
   dbg_print_int("Nut luc khoi dong: K1 (PE3) nhan?",
-      (HAL_GPIO_ReadPin(BUTTON_K1_GPIO_Port, BUTTON_K1_Pin) == GPIO_PIN_RESET) ? 1 : 0);
+                (HAL_GPIO_ReadPin(BUTTON_K1_GPIO_Port, BUTTON_K1_Pin) == GPIO_PIN_RESET) ? 1 : 0);
   dbg_print_int("                   K2 (PC5) nhan?",
-      (HAL_GPIO_ReadPin(BUTTON_K2_GPIO_Port, BUTTON_K2_Pin) == GPIO_PIN_RESET) ? 1 : 0);
+                (HAL_GPIO_ReadPin(BUTTON_K2_GPIO_Port, BUTTON_K2_Pin) == GPIO_PIN_RESET) ? 1 : 0);
 
   /*
    * Blackbox. Mount the SD NGAY DAY, truoc moi driver cam bien.
@@ -280,7 +336,14 @@ int main(void)
      * Error_Handler(). Gio chi bao roi bay tiep.
      */
     dbg_println("=====================================================");
+#if FC_SD_ENABLE
     dbg_println(" THE SD: KHONG KHOI TAO DUOC");
+#else
+    dbg_println(" THE SD: DA TAT bang FC_SD_ENABLE = 0");
+    dbg_println("   Ly do: HAL_SD_Init() treo vinh vien voi the hien tai,");
+    dbg_println("   lam main() khong bao gio chay toi phan telemetry.");
+    dbg_println("   May bay van bay binh thuong - chi khong co blackbox.");
+#endif
     dbg_print_int("   Da thu lai so lan", (int32_t)g_sd_retry_count);
     dbg_println("   Khong ghi log, va khong vao duoc che do doc the.");
     dbg_println("   May bay van bay binh thuong - day chi la phu kien.");
@@ -330,7 +393,7 @@ int main(void)
      * biet duoc voi treo may thi nguoi dung se tuong bo mach chet va di tim
      * loi o cho khac.
      */
-    for (uint32_t tick = 0; ; tick++)
+    for (uint32_t tick = 0;; tick++)
     {
       dbg_print_int("  [che do the nho] van song, giay thu", (int32_t)(tick * 2u));
       HAL_Delay(2000);
@@ -353,15 +416,13 @@ int main(void)
     dbg_print_int("  ma loi FRESULT", (int32_t)blackbox_last_error());
   }
 
-
-
   /*
    * Cac che do: DBG_MODE_IMU / IMU_RAW / IMU_CSV / FLOW / FLOW_RAW
    *             BARO / RC / RC_RAW / ARM / MOTOR / EST / STATUS
    * Dang dat EST de xem ket qua bo loc EKF. Doi sang DBG_MODE_MOTOR de xem
    * dau ra DShot, hoac DBG_MODE_ARM de xem may trang thai arm.
    */
-  dbg_console_set_mode(DBG_MODE_LOG); /* kiem tra blackbox */
+  dbg_console_set_mode(DBG_MODE_ALTHOLD); /* kiem tra blackbox */
 
   dbg_println("");
   dbg_println("=== FCH743_V1.0 khoi dong ===");
@@ -387,8 +448,17 @@ int main(void)
    * lam mat IMU phu - may bay van bay binh thuong bang ICM20602, nen
    * KHONG dat FC_MODE_FAULT.
    */
-#if IMU2_ENABLE
-  if (lsm6dsv_init())
+  /*
+   * Truoc day la `#if IMU2_ENABLE` - tat IMU phu phai build lai. Gio la phep
+   * kiem luc chay: `set imu2_enable=0` roi khoi dong lai. Doi lai la ma cua
+   * lsm6dsv.c luon duoc nap vao firmware, nhung do la cai gia dung cho mot
+   * cong tac dung de DO CHI PHI CPU - do xong phai bat lai duoc ngay.
+   */
+  if (!g_params.imu2_enable)
+  {
+    dbg_println("LSM6DSV: TAT bang imu2_enable = 0.");
+  }
+  else if (lsm6dsv_init())
   {
     dbg_print_int("LSM6DSV: OK, WHO_AM_I 0x", (int32_t)lsm6dsv_who_am_i());
 
@@ -399,8 +469,11 @@ int main(void)
      *
      * Loi o day chi lam mat tu ke - IMU phu va may bay van chay binh thuong.
      */
-#if MAG_SOURCE == MAG_SOURCE_SHUB
-    if (lsm6dsv_mag_init())
+    if (g_params.mag_source != MAG_SOURCE_SHUB)
+    {
+      dbg_println("Tu ke: TAT bang mag_source = NONE.");
+    }
+    else if (lsm6dsv_mag_init())
     {
       dbg_print_int("QMC6309: OK qua sensor hub, chip id 0x",
                     (int32_t)g_fc.mag.chip_id);
@@ -416,9 +489,6 @@ int main(void)
       dbg_println("  Mong doi chip id 144 (0x90).");
       lsm6dsv_mag_dump();
     }
-#else
-    dbg_println("Tu ke: TAT bang MAG_SOURCE = NONE.");
-#endif
 
     lsm6dsv_start();
     lsm6dsv_start_gyro_calibration();
@@ -429,9 +499,6 @@ int main(void)
     dbg_print_int("  WHO_AM_I doc duoc = 0x", (int32_t)lsm6dsv_who_am_i());
     dbg_println("  Mong doi 0x70. Xem muc Go loi trong App/Docs/KE_HOACH_LSM6DSV.md");
   }
-#else
-  dbg_println("LSM6DSV: TAT bang IMU2_ENABLE = 0 (dang do chi phi CPU).");
-#endif
 
   if (bmp388_init())
   { /* chan ~40 ms */
@@ -521,6 +588,7 @@ int main(void)
    */
   tlm_port_init(TLM_PORT_UART);
   tlm_stream_init();
+  param_msg_init();
   tlm_stream_apply_profile(TLM_PROFILE_FLIGHT);
   tlm_stream_send_text(0, "FCH743 telemetry san sang");
   dbg_println("Telemetry: USART3 @921600 -> ESP32 ESP-NOW, ho so FLIGHT.");
@@ -599,7 +667,7 @@ int main(void)
       if (!k1_seeded)
       {
         k1_seeded = true;
-        k1_prev   = k1;
+        k1_prev = k1;
       }
 
       if (k1 && !k1_prev && (uint32_t)(now_ms - k1_ms) > 250u &&
@@ -628,7 +696,7 @@ int main(void)
 
     /*
      * Nut K2 (PC5, keo len nen bam la muc THAP): chay chuoi dao chieu cho cac
-     * motor trong DSHOT_REVERSE_MASK. Voi moi motor: gui SPIN_DIRECTION_REVERSED
+     * motor trong dshot_reverse_mask. Voi moi motor: gui SPIN_DIRECTION_REVERSED
      * roi SAVE_SETTINGS. THAO CANH QUAT truoc khi bam.
      *
      * Mask = 0 thi nut nay khong lam gi — do la trang thai binh thuong.
@@ -648,7 +716,7 @@ int main(void)
        * Neu nut dang bi GIU tu luc khoi dong ma moc lai la false, thi
        * k2 && !k2_prev thanh dung ngay vong dau - mot suon xuong GIA. Voi K2
        * thi do la lenh dao chieu motor tu phat, dung luc tay nguoi dung con
-       * dat tren bo mach. Hien tai DSHOT_REVERSE_MASK = 0 nen chua no ra,
+       * dat tren bo mach. Mac dinh dshot_reverse_mask = 0 nen chua no ra,
        * nhung dat mask khac 0 la thanh tai nan.
        *
        * Da tung xay ra that voi K1 (giu K1 luc khoi dong de vao che do the
@@ -657,21 +725,22 @@ int main(void)
       if (!k2_seeded)
       {
         k2_seeded = true;
-        k2_prev   = k2;
+        k2_prev = k2;
       }
 
       if (k2 && !k2_prev && (uint32_t)(now_ms - k2_ms) > 250u)
       {
         k2_ms = now_ms;
 
-        if (DSHOT_REVERSE_MASK == 0u)
+        if (g_params.dshot_reverse_mask == 0u)
         {
-          dbg_println("K2: DSHOT_REVERSE_MASK dang la 0, khong dao chieu gi.");
+          dbg_println("K2: dshot_reverse_mask dang la 0, khong dao chieu gi.");
         }
-        else if (dshot_reverse_motors((uint8_t)DSHOT_REVERSE_MASK))
+        else if (dshot_reverse_motors(g_params.dshot_reverse_mask))
         {
-          dbg_print_int("K2: dao chieu motor theo mask 0x", DSHOT_REVERSE_MASK);
-          dbg_println("  Nghe ESC bip xac nhan, roi dat mask ve 0x00 va nap lai.");
+          dbg_print_int("K2: dao chieu motor theo mask 0x",
+                        (int32_t)g_params.dshot_reverse_mask);
+          dbg_println("  Nghe ESC bip xac nhan, roi 'set dshot_reverse_mask=0' + 'save'.");
         }
         else
         {
@@ -695,6 +764,7 @@ int main(void)
 #endif
     blackbox_update(micros()); /* ghi RAM khi ARM, xa the khi DISARM */
     dbg_console_update(now_ms);
+    cli_update(); /* dong lenh chinh tham so tren USART1 */
 
     /*
      * --- Do thoi gian mot vong lap ---
@@ -758,34 +828,37 @@ int main(void)
      */
     tlm_stream_rx_update();    /* lenh tu may tinh -> doi ho so, nap PID     */
     tlm_stream_update(now_ms); /* quet bang luong, phat cai nao toi han      */
+    param_msg_update(now_ms);  /* bom bang tham so va dau ra CLI con do      */
     tlm_port_flush();          /* danh thuc DMA neu no dang ranh             */
   }
   /* USER CODE END 3 */
 }
 
 /**
-  * @brief System Clock Configuration
-  * @retval None
-  */
+ * @brief System Clock Configuration
+ * @retval None
+ */
 void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
   /** Supply configuration update enable
-  */
+   */
   HAL_PWREx_ConfigSupply(PWR_LDO_SUPPLY);
 
   /** Configure the main internal regulator output voltage
-  */
+   */
   __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE0);
 
-  while(!__HAL_PWR_GET_FLAG(PWR_FLAG_VOSRDY)) {}
+  while (!__HAL_PWR_GET_FLAG(PWR_FLAG_VOSRDY))
+  {
+  }
 
   /** Initializes the RCC Oscillators according to the specified parameters
-  * in the RCC_OscInitTypeDef structure.
-  */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI48|RCC_OSCILLATORTYPE_HSE;
+   * in the RCC_OscInitTypeDef structure.
+   */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI48 | RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.HSI48State = RCC_HSI48_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
@@ -804,10 +877,8 @@ void SystemClock_Config(void)
   }
 
   /** Initializes the CPU, AHB and APB buses clocks
-  */
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
-                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2
-                              |RCC_CLOCKTYPE_D3PCLK1|RCC_CLOCKTYPE_D1PCLK1;
+   */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2 | RCC_CLOCKTYPE_D3PCLK1 | RCC_CLOCKTYPE_D1PCLK1;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.SYSCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_HCLK_DIV2;
@@ -823,15 +894,15 @@ void SystemClock_Config(void)
 }
 
 /**
-  * @brief Peripherals Common Clock Configuration
-  * @retval None
-  */
+ * @brief Peripherals Common Clock Configuration
+ * @retval None
+ */
 void PeriphCommonClock_Config(void)
 {
   RCC_PeriphCLKInitTypeDef PeriphClkInitStruct = {0};
 
   /** Initializes the peripherals clock
-  */
+   */
   PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_ADC;
   PeriphClkInitStruct.PLL2.PLL2M = 2;
   PeriphClkInitStruct.PLL2.PLL2N = 12;
@@ -849,10 +920,10 @@ void PeriphCommonClock_Config(void)
 }
 
 /**
-  * @brief ADC1 Initialization Function
-  * @param None
-  * @retval None
-  */
+ * @brief ADC1 Initialization Function
+ * @param None
+ * @retval None
+ */
 static void MX_ADC1_Init(void)
 {
 
@@ -868,7 +939,7 @@ static void MX_ADC1_Init(void)
   /* USER CODE END ADC1_Init 1 */
 
   /** Common config
-  */
+   */
   hadc1.Instance = ADC1;
   hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV2;
   hadc1.Init.Resolution = ADC_RESOLUTION_16B;
@@ -891,7 +962,7 @@ static void MX_ADC1_Init(void)
   }
 
   /** Configure the ADC multi-mode
-  */
+   */
   multimode.Mode = ADC_MODE_INDEPENDENT;
   if (HAL_ADCEx_MultiModeConfigChannel(&hadc1, &multimode) != HAL_OK)
   {
@@ -899,7 +970,7 @@ static void MX_ADC1_Init(void)
   }
 
   /** Configure Regular Channel
-  */
+   */
   sConfig.Channel = ADC_CHANNEL_11;
   sConfig.Rank = ADC_REGULAR_RANK_1;
   sConfig.SamplingTime = ADC_SAMPLETIME_32CYCLES_5;
@@ -913,7 +984,7 @@ static void MX_ADC1_Init(void)
   }
 
   /** Configure Regular Channel
-  */
+   */
   sConfig.Channel = ADC_CHANNEL_10;
   sConfig.Rank = ADC_REGULAR_RANK_2;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
@@ -923,14 +994,13 @@ static void MX_ADC1_Init(void)
   /* USER CODE BEGIN ADC1_Init 2 */
 
   /* USER CODE END ADC1_Init 2 */
-
 }
 
 /**
-  * @brief ADC3 Initialization Function
-  * @param None
-  * @retval None
-  */
+ * @brief ADC3 Initialization Function
+ * @param None
+ * @retval None
+ */
 static void MX_ADC3_Init(void)
 {
 
@@ -945,7 +1015,7 @@ static void MX_ADC3_Init(void)
   /* USER CODE END ADC3_Init 1 */
 
   /** Common config
-  */
+   */
   hadc3.Instance = ADC3;
   hadc3.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV2;
   hadc3.Init.Resolution = ADC_RESOLUTION_16B;
@@ -968,7 +1038,7 @@ static void MX_ADC3_Init(void)
   }
 
   /** Configure Regular Channel
-  */
+   */
   sConfig.Channel = ADC_CHANNEL_0;
   sConfig.Rank = ADC_REGULAR_RANK_1;
   sConfig.SamplingTime = ADC_SAMPLETIME_32CYCLES_5;
@@ -982,7 +1052,7 @@ static void MX_ADC3_Init(void)
   }
 
   /** Configure Regular Channel
-  */
+   */
   sConfig.Channel = ADC_CHANNEL_1;
   sConfig.Rank = ADC_REGULAR_RANK_2;
   if (HAL_ADC_ConfigChannel(&hadc3, &sConfig) != HAL_OK)
@@ -992,14 +1062,13 @@ static void MX_ADC3_Init(void)
   /* USER CODE BEGIN ADC3_Init 2 */
 
   /* USER CODE END ADC3_Init 2 */
-
 }
 
 /**
-  * @brief I2C1 Initialization Function
-  * @param None
-  * @retval None
-  */
+ * @brief I2C1 Initialization Function
+ * @param None
+ * @retval None
+ */
 static void MX_I2C1_Init(void)
 {
 
@@ -1025,14 +1094,14 @@ static void MX_I2C1_Init(void)
   }
 
   /** Configure Analogue filter
-  */
+   */
   if (HAL_I2CEx_ConfigAnalogFilter(&hi2c1, I2C_ANALOGFILTER_ENABLE) != HAL_OK)
   {
     Error_Handler();
   }
 
   /** Configure Digital filter
-  */
+   */
   if (HAL_I2CEx_ConfigDigitalFilter(&hi2c1, 0) != HAL_OK)
   {
     Error_Handler();
@@ -1040,14 +1109,13 @@ static void MX_I2C1_Init(void)
   /* USER CODE BEGIN I2C1_Init 2 */
 
   /* USER CODE END I2C1_Init 2 */
-
 }
 
 /**
-  * @brief QUADSPI Initialization Function
-  * @param None
-  * @retval None
-  */
+ * @brief QUADSPI Initialization Function
+ * @param None
+ * @retval None
+ */
 static void MX_QUADSPI_Init(void)
 {
 
@@ -1075,14 +1143,13 @@ static void MX_QUADSPI_Init(void)
   /* USER CODE BEGIN QUADSPI_Init 2 */
 
   /* USER CODE END QUADSPI_Init 2 */
-
 }
 
 /**
-  * @brief SDMMC1 Initialization Function
-  * @param None
-  * @retval None
-  */
+ * @brief SDMMC1 Initialization Function
+ * @param None
+ * @retval None
+ */
 static void MX_SDMMC1_SD_Init(void)
 {
 
@@ -1106,14 +1173,13 @@ static void MX_SDMMC1_SD_Init(void)
   /* USER CODE BEGIN SDMMC1_Init 2 */
   g_sd_init_in_progress = false;
   /* USER CODE END SDMMC1_Init 2 */
-
 }
 
 /**
-  * @brief SPI1 Initialization Function
-  * @param None
-  * @retval None
-  */
+ * @brief SPI1 Initialization Function
+ * @param None
+ * @retval None
+ */
 static void MX_SPI1_Init(void)
 {
 
@@ -1154,14 +1220,13 @@ static void MX_SPI1_Init(void)
   /* USER CODE BEGIN SPI1_Init 2 */
 
   /* USER CODE END SPI1_Init 2 */
-
 }
 
 /**
-  * @brief SPI3 Initialization Function
-  * @param None
-  * @retval None
-  */
+ * @brief SPI3 Initialization Function
+ * @param None
+ * @retval None
+ */
 static void MX_SPI3_Init(void)
 {
 
@@ -1202,14 +1267,13 @@ static void MX_SPI3_Init(void)
   /* USER CODE BEGIN SPI3_Init 2 */
 
   /* USER CODE END SPI3_Init 2 */
-
 }
 
 /**
-  * @brief TIM1 Initialization Function
-  * @param None
-  * @retval None
-  */
+ * @brief TIM1 Initialization Function
+ * @param None
+ * @retval None
+ */
 static void MX_TIM1_Init(void)
 {
 
@@ -1294,14 +1358,13 @@ static void MX_TIM1_Init(void)
 
   /* USER CODE END TIM1_Init 2 */
   HAL_TIM_MspPostInit(&htim1);
-
 }
 
 /**
-  * @brief TIM2 Initialization Function
-  * @param None
-  * @retval None
-  */
+ * @brief TIM2 Initialization Function
+ * @param None
+ * @retval None
+ */
 static void MX_TIM2_Init(void)
 {
 
@@ -1339,14 +1402,13 @@ static void MX_TIM2_Init(void)
   /* USER CODE BEGIN TIM2_Init 2 */
 
   /* USER CODE END TIM2_Init 2 */
-
 }
 
 /**
-  * @brief TIM3 Initialization Function
-  * @param None
-  * @retval None
-  */
+ * @brief TIM3 Initialization Function
+ * @param None
+ * @retval None
+ */
 static void MX_TIM3_Init(void)
 {
 
@@ -1398,14 +1460,13 @@ static void MX_TIM3_Init(void)
 
   /* USER CODE END TIM3_Init 2 */
   HAL_TIM_MspPostInit(&htim3);
-
 }
 
 /**
-  * @brief TIM4 Initialization Function
-  * @param None
-  * @retval None
-  */
+ * @brief TIM4 Initialization Function
+ * @param None
+ * @retval None
+ */
 static void MX_TIM4_Init(void)
 {
 
@@ -1461,14 +1522,13 @@ static void MX_TIM4_Init(void)
 
   /* USER CODE END TIM4_Init 2 */
   HAL_TIM_MspPostInit(&htim4);
-
 }
 
 /**
-  * @brief TIM6 Initialization Function
-  * @param None
-  * @retval None
-  */
+ * @brief TIM6 Initialization Function
+ * @param None
+ * @retval None
+ */
 static void MX_TIM6_Init(void)
 {
 
@@ -1499,14 +1559,13 @@ static void MX_TIM6_Init(void)
   /* USER CODE BEGIN TIM6_Init 2 */
 
   /* USER CODE END TIM6_Init 2 */
-
 }
 
 /**
-  * @brief TIM8 Initialization Function
-  * @param None
-  * @retval None
-  */
+ * @brief TIM8 Initialization Function
+ * @param None
+ * @retval None
+ */
 static void MX_TIM8_Init(void)
 {
 
@@ -1579,14 +1638,13 @@ static void MX_TIM8_Init(void)
 
   /* USER CODE END TIM8_Init 2 */
   HAL_TIM_MspPostInit(&htim8);
-
 }
 
 /**
-  * @brief UART4 Initialization Function
-  * @param None
-  * @retval None
-  */
+ * @brief UART4 Initialization Function
+ * @param None
+ * @retval None
+ */
 static void MX_UART4_Init(void)
 {
 
@@ -1627,14 +1685,13 @@ static void MX_UART4_Init(void)
   /* USER CODE BEGIN UART4_Init 2 */
 
   /* USER CODE END UART4_Init 2 */
-
 }
 
 /**
-  * @brief USART1 Initialization Function
-  * @param None
-  * @retval None
-  */
+ * @brief USART1 Initialization Function
+ * @param None
+ * @retval None
+ */
 static void MX_USART1_UART_Init(void)
 {
 
@@ -1675,14 +1732,13 @@ static void MX_USART1_UART_Init(void)
   /* USER CODE BEGIN USART1_Init 2 */
 
   /* USER CODE END USART1_Init 2 */
-
 }
 
 /**
-  * @brief USART2 Initialization Function
-  * @param None
-  * @retval None
-  */
+ * @brief USART2 Initialization Function
+ * @param None
+ * @retval None
+ */
 static void MX_USART2_UART_Init(void)
 {
 
@@ -1723,14 +1779,13 @@ static void MX_USART2_UART_Init(void)
   /* USER CODE BEGIN USART2_Init 2 */
 
   /* USER CODE END USART2_Init 2 */
-
 }
 
 /**
-  * @brief USART3 Initialization Function
-  * @param None
-  * @retval None
-  */
+ * @brief USART3 Initialization Function
+ * @param None
+ * @retval None
+ */
 static void MX_USART3_UART_Init(void)
 {
 
@@ -1742,7 +1797,7 @@ static void MX_USART3_UART_Init(void)
 
   /* USER CODE END USART3_Init 1 */
   huart3.Instance = USART3;
-  huart3.Init.BaudRate = 921600 ;
+  huart3.Init.BaudRate = 921600;
   huart3.Init.WordLength = UART_WORDLENGTH_8B;
   huart3.Init.StopBits = UART_STOPBITS_1;
   huart3.Init.Parity = UART_PARITY_NONE;
@@ -1771,12 +1826,11 @@ static void MX_USART3_UART_Init(void)
   /* USER CODE BEGIN USART3_Init 2 */
 
   /* USER CODE END USART3_Init 2 */
-
 }
 
 /**
-  * Enable DMA controller clock
-  */
+ * Enable DMA controller clock
+ */
 static void MX_DMA_Init(void)
 {
 
@@ -1821,12 +1875,11 @@ static void MX_DMA_Init(void)
   /* DMA2_Stream3_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA2_Stream3_IRQn, 4, 0);
   HAL_NVIC_EnableIRQ(DMA2_Stream3_IRQn);
-
 }
 
 /**
-  * Enable MDMA controller clock
-  */
+ * Enable MDMA controller clock
+ */
 static void MX_MDMA_Init(void)
 {
 
@@ -1838,14 +1891,13 @@ static void MX_MDMA_Init(void)
   /* MDMA_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(MDMA_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(MDMA_IRQn);
-
 }
 
 /**
-  * @brief GPIO Initialization Function
-  * @param None
-  * @retval None
-  */
+ * @brief GPIO Initialization Function
+ * @param None
+ * @retval None
+ */
 static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
@@ -1865,10 +1917,10 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(SPI4_SS_GPIO_Port, SPI4_SS_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, SPI1_SS_Pin|SPI3_SS_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOA, SPI1_SS_Pin | SPI3_SS_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, LCD_BLK_Pin|LCD_RS_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, LCD_BLK_Pin | LCD_RS_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(SPI2_SS_GPIO_Port, SPI2_SS_Pin, GPIO_PIN_SET);
@@ -1893,7 +1945,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(SPI4_INT_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : SPI1_SS_Pin SPI3_SS_Pin */
-  GPIO_InitStruct.Pin = SPI1_SS_Pin|SPI3_SS_Pin;
+  GPIO_InitStruct.Pin = SPI1_SS_Pin | SPI3_SS_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -1912,7 +1964,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(BUTTON_K2_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : LCD_BLK_Pin LCD_RS_Pin SPI2_SS_Pin */
-  GPIO_InitStruct.Pin = LCD_BLK_Pin|LCD_RS_Pin|SPI2_SS_Pin;
+  GPIO_InitStruct.Pin = LCD_BLK_Pin | LCD_RS_Pin | SPI2_SS_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -1925,7 +1977,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(I2C2_INT_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : PB13 PB14 PB15 */
-  GPIO_InitStruct.Pin = GPIO_PIN_13|GPIO_PIN_14|GPIO_PIN_15;
+  GPIO_InitStruct.Pin = GPIO_PIN_13 | GPIO_PIN_14 | GPIO_PIN_15;
   GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
@@ -1939,7 +1991,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(SPI3_INT_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : I2C1_INT2_Pin I2C1_INT1_Pin */
-  GPIO_InitStruct.Pin = I2C1_INT2_Pin|I2C1_INT1_Pin;
+  GPIO_InitStruct.Pin = I2C1_INT2_Pin | I2C1_INT1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
@@ -1960,7 +2012,7 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE END 4 */
 
- /* MPU Configuration */
+/* MPU Configuration */
 
 void MPU_Config(void)
 {
@@ -1970,7 +2022,7 @@ void MPU_Config(void)
   HAL_MPU_Disable();
 
   /** Initializes and configures the Region and the memory to be protected
-  */
+   */
   MPU_InitStruct.Enable = MPU_REGION_ENABLE;
   MPU_InitStruct.Number = MPU_REGION_NUMBER0;
   MPU_InitStruct.BaseAddress = 0x0;
@@ -1986,13 +2038,12 @@ void MPU_Config(void)
   HAL_MPU_ConfigRegion(&MPU_InitStruct);
   /* Enables the MPU */
   HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);
-
 }
 
 /**
-  * @brief  This function is executed in case of error occurrence.
-  * @retval None
-  */
+ * @brief  This function is executed in case of error occurrence.
+ * @retval None
+ */
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
@@ -2020,7 +2071,7 @@ void Error_Handler(void)
   if (g_sd_init_in_progress)
   {
     g_sd_init_in_progress = false;
-    g_sd_init_failed      = true;
+    g_sd_init_failed = true;
     return;
   }
 
@@ -2032,12 +2083,12 @@ void Error_Handler(void)
 }
 #ifdef USE_FULL_ASSERT
 /**
-  * @brief  Reports the name of the source file and the source line number
-  *         where the assert_param error has occurred.
-  * @param  file: pointer to the source file name
-  * @param  line: assert_param error line source number
-  * @retval None
-  */
+ * @brief  Reports the name of the source file and the source line number
+ *         where the assert_param error has occurred.
+ * @param  file: pointer to the source file name
+ * @param  line: assert_param error line source number
+ * @retval None
+ */
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */

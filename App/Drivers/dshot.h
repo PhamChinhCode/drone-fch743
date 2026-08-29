@@ -113,6 +113,16 @@
 bool dshot_init(void);
 
 /**
+ * Dung lai map motor, muc ga day va nhip bit tu g_params.
+ *
+ * Map motor va muc ga day co tac dung NGAY. Nhip bit thi khong: no chi ghi
+ * vao ARR cua TIM1 trong dshot_init(), va doi nhip bit con doi HAI dieu kien
+ * nua ma phan mem khong lam duoc - phai RUT PIN CAM LAI cho ESC vi BLHeli_S
+ * do giao thuc dung mot lan luc no khoi dong.
+ */
+void dshot_apply_params(void);
+
+/**
  * Dựng và phát một khung cho cả bốn motor. KHÔNG chặn — nạp DMA rồi trả về.
  * Tự giữ nhịp DSHOT_UPDATE_RATE_HZ nên gọi bao nhiêu lần cũng được; gọi
  * trong vòng lặp chính, SAU arming_update() để thấy trạng thái arm mới nhất.
