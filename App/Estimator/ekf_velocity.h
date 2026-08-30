@@ -95,7 +95,16 @@ float ekf_velocity_uncertainty_mps(void);
 void ekf_velocity_debug_rates(float *wx, float *wy, float *gx, float *gy);
 
 /** true khi đã có ít nhất một mẫu flow hợp lệ gần đây. */
+/**
+ * true khi uoc luong van toc con dung duoc.
+ *
+ * HET HAN sau est_flow_timeout_ms neu khong chap nhan duoc mau flow nao —
+ * khong co phep do thi bo loc chi tich phan gia toc ke va troi rat nhanh.
+ */
 bool ekf_velocity_is_valid(void);
+
+/** Da bao lau ke tu mau flow duoc chap nhan gan nhat, ms. 0xFFFFFFFF = chua co. */
+uint32_t ekf_velocity_age_ms(void);
 
 /** Số mẫu flow đã dùng và đã bị từ chối. */
 uint32_t ekf_velocity_accepted(void);

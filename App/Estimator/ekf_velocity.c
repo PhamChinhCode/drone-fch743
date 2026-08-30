@@ -6,6 +6,7 @@
 #include "ekf_velocity.h"
 #include "param_table.h"
 #include "ekf_attitude.h"
+#include "fc_time.h"
 
 /* Một bộ lọc 2 trạng thái cho mỗi trục ngang: [vận tốc, bias gia tốc]. */
 typedef struct {
@@ -23,6 +24,28 @@ static float s_dbg_wx, s_dbg_wy, s_dbg_gx, s_dbg_gy;
 static bool     s_valid;
 static uint32_t s_accepted;
 static uint32_t s_rejected;
+
+/*
+ * Moc thoi gian cua lan CHAP NHAN mau flow gan nhat.
+ *
+ * VI SAO CAN: truoc day s_valid bat mot lan roi KHONG BAO GIO tat. Chi co
+ * ekf_velocity_init() dat no ve false. Hau qua day chuyen, da do duoc that:
+ *
+ *   1. Nghieng qua est_flow_max_tilt_deg (20 do) -> cong loc chan mau flow
+ *   2. Bo loc mat phep do, chi con SUY TINH tu gia toc ke. O 15 do nghieng,
+ *      gia toc ngang ~2,6 m/s^2 nen chi nua giay da tich luy 1,3 m/s sai so
+ *   3. ekf_velocity_is_valid() VAN tra ve true
+ *   4. ctrl_poshold tin vao con so do va nghieng may bay theo no
+ *   5. Nghieng nhieu hon -> chan nhieu hon -> vong phan hoi DUONG
+ *
+ *   Nguoi dung bao: POSHOLD lac theo vong tron voi ban kinh LON DAN. Buoc 5
+ *   chinh la cai lam ban kinh lon dan.
+ *
+ *   Va duong lui ve ANGLE ma ctrl_poshold tu nhan la co - "mat flow thi tra
+ *   false" - CHUA BAO GIO chay duoc, vi dieu kien cua no la !is_valid().
+ */
+static uint32_t s_last_ok_us;
+static bool     s_have_ok;
 
 /* ==========================================================================
  * Khởi tạo
@@ -42,9 +65,11 @@ void ekf_velocity_init(void)
     axis_init(&s_e);
 
     s_body_meas = (vec3f_t){ 0.0f, 0.0f, 0.0f };
-    s_valid     = false;
-    s_accepted  = 0;
-    s_rejected  = 0;
+    s_valid      = false;
+    s_accepted   = 0;
+    s_rejected   = 0;
+    s_last_ok_us = 0;
+    s_have_ok    = false;
 }
 
 /* ==========================================================================
@@ -209,7 +234,27 @@ bool ekf_velocity_update_flow(float flow_x_rad, float flow_y_rad,
     axis_update(&s_n, v_ned.x, r);
     axis_update(&s_e, v_ned.y, r);
 
-    s_valid = true;
+    /*
+     * Flow QUAY LAI sau mot khoang mat: nap lai bo loc thay vi hoa tron mau
+     * moi voi mot trang thai da troi.
+     *
+     * Trong khoang mat, bo loc chi tich phan gia toc ke nen van toc uoc luong
+     * co the da lech vai m/s. Hoa mau tot voi trang thai rac chi lam ban mau
+     * tot; vut trang thai cu di roi bat dau lai tu phep do moi thi dung hon.
+     *
+     * axis_init() dat van toc ve 0 va phuong sai ve lon, nen phep cap nhat
+     * ngay sau day se keo thang toi gia tri do duoc.
+     */
+    if (s_have_ok &&
+        fc_elapsed_us(micros(), s_last_ok_us) >
+            (uint32_t)g_params.est_flow_timeout_ms * 1000u) {
+        axis_init(&s_n);
+        axis_init(&s_e);
+    }
+
+    s_valid      = true;
+    s_last_ok_us = micros();
+    s_have_ok    = true;
     s_accepted++;
     return true;
 }
@@ -221,7 +266,41 @@ bool ekf_velocity_update_flow(float flow_x_rad, float flow_y_rad,
 float   ekf_velocity_north(void)        { return s_n.x[0]; }
 float   ekf_velocity_east(void)         { return s_e.x[0]; }
 vec3f_t ekf_velocity_body_measured(void){ return s_body_meas; }
-bool    ekf_velocity_is_valid(void)     { return s_valid; }
+bool ekf_velocity_is_valid(void)
+{
+    if (!s_valid) {
+        return false;
+    }
+
+    /*
+     * HET HAN neu da lau khong chap nhan duoc mau flow nao.
+     *
+     * Khong co phep do thi bo loc chi con tich phan gia toc ke, va cai do
+     * troi rat nhanh - xem giai thich dai o cho khai bao s_last_ok_us.
+     *
+     * Nguong dat theo est_flow_timeout_ms. Qua ngan thi co chop tat lien tuc
+     * moi khi nghieng nhe; qua dai thi khong cat duoc vong phan hoi duong.
+     */
+    if (!s_have_ok) {
+        return false;
+    }
+
+    const uint32_t age_us = fc_elapsed_us(micros(), s_last_ok_us);
+
+    if (age_us > (uint32_t)g_params.est_flow_timeout_ms * 1000u) {
+        return false;
+    }
+    return true;
+}
+
+/** Da bao lau ke tu mau flow duoc chap nhan gan nhat, mili giay. */
+uint32_t ekf_velocity_age_ms(void)
+{
+    if (!s_have_ok) {
+        return 0xFFFFFFFFu;
+    }
+    return fc_elapsed_us(micros(), s_last_ok_us) / 1000u;
+}
 uint32_t ekf_velocity_accepted(void)    { return s_accepted; }
 uint32_t ekf_velocity_rejected(void)    { return s_rejected; }
 

@@ -23,6 +23,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <string.h>
 #include "fc_state.h"
 #include "fc_time.h"
 #include "icm20602.h"
@@ -143,6 +144,33 @@ static void MX_SPI3_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+/*
+ * KENH BAO TIN LUC KHOI DONG - chan, khong DMA, khong ngat.
+ *
+ * VI SAO CAN: dbg_console chi song sau dbg_console_init(), ma cho do nam SAU
+ * TOAN BO cac MX_*_Init(). Bat ky cai nao trong so do treo thi bo mach im
+ * hoan toan va khong co cach nao biet no dung o dau - da mat ca buoi vi dung
+ * chuyen nay.
+ *
+ * Ham nay dung HAL_UART_Transmit kieu chan nen chay duoc ngay khi
+ * MX_USART1_UART_Init() vua xong, va khong dung gi tra ve DMA hay ngat.
+ */
+void boot_msg(const char *s)
+{
+  if (huart1.Instance == NULL)
+  {
+    return; /* UART chua khoi tao, im lang */
+  }
+
+  const uint16_t n = (uint16_t)strlen(s);
+
+  if (n != 0u)
+  {
+    (void)HAL_UART_Transmit(&huart1, (const uint8_t *)s, n, 50u);
+  }
+  (void)HAL_UART_Transmit(&huart1, (const uint8_t *)"\r\n", 2u, 10u);
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -181,6 +209,32 @@ int main(void)
 
   /* USER CODE BEGIN SysInit */
 
+  /*
+   * Bat USART1 NGAY DAY, truoc moi ngoai vi khac, chi de co duong bao tin.
+   *
+   * Goi lai o duoi trong day MX_*_Init() binh thuong khong sao: HAL_UART_Init
+   * tu deinit roi init lai. Va dbg_console_init() moi la cho gan DMA vao, nen
+   * khong xung dot.
+   */
+  /*
+   * PHAI goi MX_DMA_Init() TRUOC.
+   *
+   * HAL_UART_MspInit() cua USART1 co goi HAL_DMA_Init() cho luong TX/RX. Ma
+   * MX_DMA_Init() moi la cho bat XUNG cho bo DMA. Goi nguoc thu tu thi cau
+   * hinh DMA duoc ghi vao mot ngoai vi chua co xung - ghi vao khong khi.
+   *
+   * Hau qua da do duoc: console phat mot khoi DMA roi ket vinh vien o
+   * huart1.gState = HAL_UART_STATE_BUSY_TX, va tu do khong in them gi nua.
+   * Nhin tu ngoai giong het "treo sau khi khoi tao USB".
+   *
+   * Goi lai o duoi trong day MX_*_Init() binh thuong khong sao: ca hai ham
+   * deu chi bat xung va dat NVIC, chay hai lan cho cung ket qua.
+   */
+  MX_DMA_Init();
+  MX_USART1_UART_Init();
+  boot_msg("");
+  boot_msg("boot: xung he thong OK, bat dau khoi tao ngoai vi");
+
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
@@ -188,20 +242,8 @@ int main(void)
   MX_MDMA_Init();
   MX_DMA_Init();
   MX_QUADSPI_Init();
-#if FC_SD_ENABLE
   MX_SDMMC1_SD_Init();
   MX_FATFS_Init();
-#else
-  /*
-   * BO QUA the SD — xem FC_SD_ENABLE trong fc_config.h.
-   *
-   * HAL_SD_Init() voi the hien tai KHONG TRA VE: no quay vong trong
-   * SD_SendSDStatus(). Goi no o day nghia la main() dung lai NGAY TAI DONG
-   * NAY, va moi thu phia sau — telemetry, CLI, cam bien, dieu khien — khong
-   * bao gio khoi dong. Mot cai the hong lam liet ca mach bay.
-   */
-  g_sd_init_failed = true;
-#endif
   MX_USB_DEVICE_Init();
   MX_I2C1_Init();
   MX_SPI1_Init();
@@ -242,7 +284,7 @@ int main(void)
     {
       HAL_Delay(200);
       (void)HAL_SD_DeInit(&hsd1);
-
+      HAL_Delay(200);
       g_sd_init_in_progress = true;
       g_sd_init_failed = (HAL_SD_Init(&hsd1) != HAL_OK);
       g_sd_init_in_progress = false;
@@ -422,7 +464,7 @@ int main(void)
    * Dang dat EST de xem ket qua bo loc EKF. Doi sang DBG_MODE_MOTOR de xem
    * dau ra DShot, hoac DBG_MODE_ARM de xem may trang thai arm.
    */
-  dbg_console_set_mode(DBG_MODE_ALTHOLD); /* kiem tra blackbox */
+  dbg_console_set_mode(DBG_MODE_FLOW); /* kiem tra DBG_MODE_ALTHOLD */
 
   dbg_println("");
   dbg_println("=== FCH743_V1.0 khoi dong ===");
@@ -643,7 +685,7 @@ int main(void)
     {
       static bool k1_prev = false;
       static uint32_t k1_ms = 0;
-      static uint8_t k1_next = 0;
+      // static uint8_t k1_next = 0;
       static bool k1_seeded = false;
 
       const bool k1 =
@@ -676,20 +718,20 @@ int main(void)
       {
         k1_ms = now_ms;
 
-        if (dshot_motor_test_active() >= 0)
-        {
-          dshot_motor_test_stop();
-          dbg_println("Dung quay thu.");
-        }
-        else if (dshot_motor_test_start(k1_next, 0.08f, 1500))
-        {
-          dbg_print_int("Quay thu motor", (int32_t)k1_next + 1);
-          k1_next = (uint8_t)((k1_next + 1u) % FC_MOTOR_COUNT);
-        }
-        else
-        {
-          dbg_println("Khong quay thu duoc - dang ARM.");
-        }
+        // if (dshot_motor_test_active() >= 0)
+        // {
+        //   dshot_motor_test_stop();
+        //   dbg_println("Dung quay thu.");
+        // }
+        // else if (dshot_motor_test_start(k1_next, 0.08f, 1500))
+        // {
+        //   dbg_print_int("Quay thu motor", (int32_t)k1_next + 1);
+        //   k1_next = (uint8_t)((k1_next + 1u) % FC_MOTOR_COUNT);
+        // }
+        // else
+        // {
+        //   dbg_println("Khong quay thu duoc - dang ARM.");
+        // }
       }
       k1_prev = k1;
     }
@@ -732,20 +774,20 @@ int main(void)
       {
         k2_ms = now_ms;
 
-        if (g_params.dshot_reverse_mask == 0u)
-        {
-          dbg_println("K2: dshot_reverse_mask dang la 0, khong dao chieu gi.");
-        }
-        else if (dshot_reverse_motors(g_params.dshot_reverse_mask))
-        {
-          dbg_print_int("K2: dao chieu motor theo mask 0x",
-                        (int32_t)g_params.dshot_reverse_mask);
-          dbg_println("  Nghe ESC bip xac nhan, roi 'set dshot_reverse_mask=0' + 'save'.");
-        }
-        else
-        {
-          dbg_println("K2: khong chay duoc - dang ARM hoac chuoi truoc chua xong.");
-        }
+        // if (g_params.dshot_reverse_mask == 0u)
+        // {
+        //   dbg_println("K2: dshot_reverse_mask dang la 0, khong dao chieu gi.");
+        // }
+        // else if (dshot_reverse_motors(g_params.dshot_reverse_mask))
+        // {
+        //   dbg_print_int("K2: dao chieu motor theo mask 0x",
+        //                 (int32_t)g_params.dshot_reverse_mask);
+        //   dbg_println("  Nghe ESC bip xac nhan, roi 'set dshot_reverse_mask=0' + 'save'.");
+        // }
+        // else
+        // {
+        //   dbg_println("K2: khong chay duoc - dang ARM hoac chuoi truoc chua xong.");
+        // }
       }
       k2_prev = k2;
     }
@@ -1141,6 +1183,7 @@ static void MX_QUADSPI_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN QUADSPI_Init 2 */
+  boot_msg("boot: QUADSPI OK");
 
   /* USER CODE END QUADSPI_Init 2 */
 }
@@ -1154,7 +1197,24 @@ static void MX_SDMMC1_SD_Init(void)
 {
 
   /* USER CODE BEGIN SDMMC1_Init 0 */
-
+#if !FC_SD_ENABLE
+  /*
+   * BO QUA the SD - xem FC_SD_ENABLE trong fc_config.h.
+   *
+   * HAL_SD_Init() voi the hien tai KHONG TRA VE: no quay vong trong
+   * SD_SendSDStatus(). Goi no nghia la main() dung lai NGAY TAI DAY, va moi
+   * thu phia sau - telemetry, CLI, cam bien, dieu khien - khong bao gio khoi
+   * dong. Mot cai the hong lam liet ca mach bay.
+   *
+   * VI SAO CHOT NAM O DAY chu khong o cho GOI ham:
+   *   Ban dau no boc quanh MX_SDMMC1_SD_Init() trong main(), tuc trong vung
+   *   CubeMX sinh - va Generate Code lan 29/08 da XOA SACH no. Vung
+   *   USER CODE nay thi CubeMX giu lai, nen dat o day moi song sot.
+   */
+  g_sd_init_failed = true;
+  boot_msg("boot: SDMMC BO QUA (FC_SD_ENABLE = 0)");
+  return;
+#endif
   /* USER CODE END SDMMC1_Init 0 */
 
   /* USER CODE BEGIN SDMMC1_Init 1 */
@@ -1172,6 +1232,7 @@ static void MX_SDMMC1_SD_Init(void)
   }
   /* USER CODE BEGIN SDMMC1_Init 2 */
   g_sd_init_in_progress = false;
+  boot_msg("boot: SDMMC OK");
   /* USER CODE END SDMMC1_Init 2 */
 }
 
@@ -2074,6 +2135,14 @@ void Error_Handler(void)
     g_sd_init_failed = true;
     return;
   }
+
+  /*
+   * NOI TRUOC KHI CHET.
+   *
+   * Ban goc tat ngat roi quay vong im lang, nhin tu ngoai giong het chip
+   * chet. Mot dong chu o day bien mot buoi do dac thanh mot cai nhin.
+   */
+  boot_msg("!!! Error_Handler - dung han tai day");
 
   __disable_irq();
   while (1)

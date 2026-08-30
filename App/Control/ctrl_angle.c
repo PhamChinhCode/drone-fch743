@@ -220,6 +220,36 @@ bool ctrl_angle_update(uint32_t now_us)
         }
     }
 
+    /*
+     * --- Bu do lech lap dat IMU ---
+     *
+     * Bo uoc luong can bang theo TRONG LUC, nhung no chi biet trong luc qua
+     * con chip. Chip dan lech 1 do so voi khung thi "nam ngang" cua EKF la
+     * nghieng 1 do cua khung, va may bay troi deu mot huong mai mai.
+     *
+     * Lech 0,9 do cho gia toc ngang 0,154 m/s^2 - sau muoi giay la 1,5 m/s va
+     * di duoc gan 8 met. Khong cach nao chinh PID cho het, vi bo dieu khien
+     * dang BAM DUNG mot muc tieu SAI.
+     *
+     * DAT O DAY, KHONG DAT O CHO TINH TU CAN:
+     *   Nhanh POSHOLD ben tren GHI DE target_roll/target_pitch bang goc do
+     *   vong giu van toc quyet dinh. Cong trim truoc do thi POSHOLD xoa mat.
+     *   Cong o day thi ca ANGLE, ALTHOLD lan POSHOLD deu duoc bu.
+     *
+     *   Rieng ACRO da thoat som phia tren - dung vay, ACRO khong co goc muc
+     *   tieu de ma bu.
+     *
+     * Trong POSHOLD, khau tich phan cua vong van toc von cung tu bu duoc do
+     * lech nay. Nhung de no phai bu nghia la tich phan luon dung o mot gia
+     * tri khac 0, an mat du dia danh cho gio. Bu san o day thi tich phan bat
+     * dau tu gan 0.
+     *
+     * CACH DO: dat may bay len mat DA KIEM PHANG bang nivo, doc roll/pitch o
+     * mode 16, roi dat trim bang DUNG so doc duoc doi dau.
+     */
+    target_roll  += g_params.angle_trim_roll_deg  * FC_DEG_TO_RAD;
+    target_pitch += g_params.angle_trim_pitch_deg * FC_DEG_TO_RAD;
+
     g_fc.ctrl.setpoint_angle_rad.roll  = target_roll;
     g_fc.ctrl.setpoint_angle_rad.pitch = target_pitch;
     g_fc.ctrl.setpoint_angle_rad.yaw   = 0.0f;

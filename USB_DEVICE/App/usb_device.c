@@ -31,6 +31,7 @@
 #include "usb_msc.h"
 
 extern USBD_StorageTypeDef USBD_MSC_fops;
+extern void boot_msg(const char *s);
 /* USER CODE END Includes */
 
 /* USER CODE BEGIN PV */
@@ -67,53 +68,33 @@ USBD_HandleTypeDef hUsbDeviceFS;
 void MX_USB_DEVICE_Init(void)
 {
   /* USER CODE BEGIN USB_DEVICE_Init_PreTreatment */
+  boot_msg("  usb: vao MX_USB_DEVICE_Init");
 
   /*
-   * ---- Cap xung 48 MHz cho USB ----
+   * ---- Xung USB: DE CHO CubeMX LO, DUNG TU DAT O DAY ----
    *
-   * CubeMX KHONG sinh phan nay ra: trong SystemClock_Config() cua Core/Src/main.c,
-   * PeriphClockSelection chi co RCC_PERIPHCLK_ADC va bo dao dong chi bat HSE.
-   * HSI48 khong he duoc bat, va bo chon xung USB khong he duoc dat.
+   * Truoc day cho nay tu bat HSI48 + CRS roi dat bo chon xung USB, vi ban
+   * CubeMX luc do KHONG sinh ra phan cau hinh xung nao ca.
    *
-   * Hau qua: OTG_FS chay khong co xung hop le nen KHONG BAO GIO enumerate duoc.
-   * Do cung la ly do duong CDC tu truoc toi gio chua bao gio hien ra tren may
-   * tinh - khong phai loi cap, khong phai loi lop thiet bi.
+   * Sau lan Generate Code 29/08, HAL_PCD_MspInit() trong usbd_conf.c da tu
+   * dat UsbClockSelection = RCC_USBCLKSOURCE_HSI48. Va luc do khoi cu o day
+   * tro thanh DOC HAI:
    *
-   * Dat o day thay vi trong SystemClock_Config() vi day la vung USER CODE,
-   * CubeMX Generate Code khong xoa mat. Va no chay TRUOC USBD_Init(), tuc
-   * truoc khi HAL_PCD_Init() dung toi xung, nen dung thu tu.
+   *   - Truoc kia MspInit ghi de bo chon xung sang PLL3, nen khoi nay chay
+   *     xong cung khong anh huong gi - USB chay bang PLL3 va hoat dong tot.
+   *   - Bay gio MspInit chon dung HSI48, tuc USB THAT SU dung con HSI48 ma
+   *     khoi nay vua chinh trim (HSI48CalibrationValue = 32 ghi de tri hieu
+   *     chuan xuat xuong cua chip).
    *
-   * CRS keo HSI48 bam theo goi SOF cua may chu. USB FS doi sai so +-0,25%,
-   * ma HSI48 chay tran chi dat +-1% nen phai co CRS moi chac.
+   * Hau qua do duoc bang GDB: ket vinh vien trong USB_CoreReset, GRSTCTL bit
+   * CSRST khong bao gio tu xoa, count chay toi 244 trieu. Bo mach im hoan
+   * toan tu luc khoi dong.
+   *
+   * CRS thi mat theo - HSI48 chay tran chi dat +-1% so voi +-0,25% ma USB FS
+   * doi hoi. Thuc te van enumerate duoc, nhung neu sau nay gap loi truyen
+   * chap chon thi day la cho quay lai, va phai dat CRS SAU khi USB da
+   * enumerate chu khong phai truoc.
    */
-  {
-    RCC_OscInitTypeDef       osc   = {0};
-    RCC_PeriphCLKInitTypeDef pclk  = {0};
-    RCC_CRSInitTypeDef       crs   = {0};
-
-    osc.OscillatorType = RCC_OSCILLATORTYPE_HSI48;
-    osc.HSI48State     = RCC_HSI48_ON;
-    if (HAL_RCC_OscConfig(&osc) != HAL_OK)
-    {
-      Error_Handler();
-    }
-
-    pclk.PeriphClockSelection = RCC_PERIPHCLK_USB;
-    pclk.UsbClockSelection    = RCC_USBCLKSOURCE_HSI48;
-    if (HAL_RCCEx_PeriphCLKConfig(&pclk) != HAL_OK)
-    {
-      Error_Handler();
-    }
-
-    __HAL_RCC_CRS_CLK_ENABLE();
-    crs.Prescaler             = RCC_CRS_SYNC_DIV1;
-    crs.Source                = RCC_CRS_SYNC_SOURCE_USB2;
-    crs.Polarity              = RCC_CRS_SYNC_POLARITY_RISING;
-    crs.ReloadValue           = __HAL_RCC_CRS_RELOADVALUE_CALCULATE(48000000U, 1000U);
-    crs.ErrorLimitValue       = 34;
-    crs.HSI48CalibrationValue = 32;
-    HAL_RCCEx_CRSConfig(&crs);
-  }
 
   /*
    * Chon lop USB theo che do chay. Ca khoi nay nam TRON trong vung USER CODE
@@ -128,6 +109,47 @@ void MX_USB_DEVICE_Init(void)
    * Mo ta thiet bi (FS_Desc) dung chung duoc cho ca hai vi bDeviceClass = 0,
    * tuc lop duoc khai bao o muc giao dien chu khong phai muc thiet bi.
    */
+  boot_msg("  usb: doc nut K1 xong");
+
+  /*
+   * Nhanh CDC lam TRON O DAY roi return, thay vi de code CubeMX sinh chay.
+   *
+   * Ly do: bon loi goi USBD_* nam trong vung CubeMX sinh nen khong chen duoc
+   * moc go loi vao giua. Lam o day thi moi buoc deu bao duoc, va nhanh MSC
+   * ben duoi von da lam nhu vay roi - hai nhanh gio doi xung nhau.
+   */
+  if (!usb_msc_boot_requested())
+  {
+    boot_msg("  usb: [CDC] truoc USBD_Init");
+    if (USBD_Init(&hUsbDeviceFS, &FS_Desc, DEVICE_FS) != USBD_OK)
+    {
+      Error_Handler();
+    }
+    boot_msg("  usb: [CDC] USBD_Init xong");
+
+    if (USBD_RegisterClass(&hUsbDeviceFS, &USBD_CDC) != USBD_OK)
+    {
+      Error_Handler();
+    }
+    boot_msg("  usb: [CDC] RegisterClass xong");
+
+    if (USBD_CDC_RegisterInterface(&hUsbDeviceFS, &USBD_Interface_fops_FS) != USBD_OK)
+    {
+      Error_Handler();
+    }
+    boot_msg("  usb: [CDC] RegisterInterface xong");
+
+    if (USBD_Start(&hUsbDeviceFS) != USBD_OK)
+    {
+      Error_Handler();
+    }
+    boot_msg("  usb: [CDC] USBD_Start xong");
+
+    HAL_PWREx_EnableUSBVoltageDetector();
+    boot_msg("  usb: [CDC] hoan tat");
+    return;
+  }
+
   if (usb_msc_boot_requested())
   {
     if (USBD_Init(&hUsbDeviceFS, &FS_Desc, DEVICE_FS) != USBD_OK)
@@ -171,7 +193,9 @@ void MX_USB_DEVICE_Init(void)
   }
 
   /* USER CODE BEGIN USB_DEVICE_Init_PostTreatment */
+  boot_msg("  usb: USBD_Start xong");
   HAL_PWREx_EnableUSBVoltageDetector();
+  boot_msg("  usb: bat bo do dien ap USB xong");
 
   /* USER CODE END USB_DEVICE_Init_PostTreatment */
 }

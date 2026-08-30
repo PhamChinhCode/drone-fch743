@@ -656,7 +656,7 @@ static void emit_header(void)
         wr_str(&w, "     sum_x      sum_y |   fx   fy | qual | range_m | rad_per_count hien tai");
         break;
     case DBG_MODE_VEL:
-        wr_str(&w, "     wx      gx   tong |     wy      gy   tong |  vb_x   vb_y | range_m | qual |  bo");
+        wr_str(&w, "     wx      gx   tong |     wy      gy   tong |  vb_x   vb_y | range_m | qual |  bo | tuoi | tin");
         break;
     case DBG_MODE_POSHOLD:
         wr_str(&w, "  v_fwd  v_rgt |  t_fwd  t_rgt |   I_x   I_y |     dN     dE | giu |  tgt_r  tgt_p | che do");
@@ -1445,6 +1445,19 @@ static void emit_vel(void)
     wr_str(&w, " |");
     wr_i32(&w, (int32_t)ekf_velocity_rejected(), 4);
 
+    /* Tuoi cua mau flow gan nhat, va co tin cay da het han chua. */
+    {
+        const uint32_t age = ekf_velocity_age_ms();
+
+        wr_str(&w, " |");
+        if (age == 0xFFFFFFFFu) {
+            wr_str_pad(&w, "  --", 6);
+        } else {
+            wr_i32(&w, (int32_t)age, 6);
+        }
+        wr_str(&w, " |");
+        wr_str_pad(&w, ekf_velocity_is_valid() ? " co" : " HET", 5);
+    }
     wr_eol(&w);
     (void)tx_push(line, w.len);
 }

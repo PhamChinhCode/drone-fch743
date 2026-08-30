@@ -69,7 +69,7 @@
  * ví dụ khi ý NGHĨA của một tham số đổi mà tên, kiểu và giới hạn giữ nguyên
  * (đổi đơn vị, đổi quy ước dấu). CRC không nhìn thấy loại thay đổi đó.
  */
-#define PARAM_SCHEMA_VERSION  6u
+#define PARAM_SCHEMA_VERSION  8u
 
 typedef enum {
     PARAM_STORE_OK = 0,      /**< đã nạp / đã ghi thành công          */

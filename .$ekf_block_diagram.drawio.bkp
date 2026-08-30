@@ -1,0 +1,101 @@
+<?xml version="1.0" ?>
+<mxfile host="Electron" modified="2026-08-30T06:17:00.000Z" agent="5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" version="16.1.2" type="device">
+  <diagram id="EKF_Architecture" name="EKF Estimators Flow">
+    <mxGraphModel dx="1000" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="100" value="IMU Sensor&amp;#xa;(gyro_dps, accel_mps2)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontSize=12;align=center;" parent="1" vertex="1">
+          <mxGeometry x="50" y="100" width="180" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="101" value="Barometer&amp;#xa;(altitude_rel_m)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontSize=12;align=center;" parent="1" vertex="1">
+          <mxGeometry x="50" y="345" width="180" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="102" value="ToF Rangefinder&amp;#xa;(range_mm)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontSize=12;align=center;" parent="1" vertex="1">
+          <mxGeometry x="50" y="445" width="180" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="103" value="Optical Flow&amp;#xa;(flow_x_raw, flow_y_raw)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontSize=12;align=center;" parent="1" vertex="1">
+          <mxGeometry x="50" y="570" width="180" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="200" value="EKF Attitude (6-State ESKF)&amp;#xa;&amp;#xa;State: q (Attitude), bg (Gyro Bias)&amp;#xa;Predict: gyro_rad&amp;#xa;Update: accel_mps2" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;fontSize=12;align=center;" parent="1" vertex="1">
+          <mxGeometry x="300" y="90" width="220" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="201" value="Body-to-NED Projection&amp;#xa;&amp;#xa;a_ned = R * a_body&amp;#xa;a_up = a_ned.z - g&amp;#xa;a_ned.x, y (horizontal accel)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1;fontSize=12;align=center;" parent="1" vertex="1">
+          <mxGeometry x="300" y="210" width="220" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="202" value="EKF Altitude (3-State KF)&amp;#xa;&amp;#xa;State: h, vz, bias_az&amp;#xa;Predict: a_up&amp;#xa;Update: Baro, ToF Range" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;fontSize=12;align=center;" parent="1" vertex="1">
+          <mxGeometry x="300" y="330" width="220" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="203" value="Flow Bù Quay &amp; Chiếu NED&amp;#xa;&amp;#xa;Bù quay bằng Gyro&amp;#xa;Scale theo Range (h_tof)&amp;#xa;Xoay sang NED: v_ned" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1;fontSize=12;align=center;" parent="1" vertex="1">
+          <mxGeometry x="300" y="480" width="220" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="204" value="EKF Velocity (2x 2-State KF)&amp;#xa;&amp;#xa;States: vn, ve, bias_ax, bias_ay&amp;#xa;Predict: a_ned.x, y&amp;#xa;Update: v_ned" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;fontSize=12;align=center;" parent="1" vertex="1">
+          <mxGeometry x="300" y="600" width="220" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="205" value="Position Integrator&amp;#xa;&amp;#xa;position_m.x, y = integral(vn, ve)&amp;#xa;(Sử dụng cho giữ vị trí ngắn hạn)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1;fontSize=12;align=center;" parent="1" vertex="1">
+          <mxGeometry x="300" y="720" width="220" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="300" value="g_fc.est (Thái độ)&amp;#xa;&amp;#xa;- attitude_q (quaternion)&amp;#xa;- attitude_rad (Euler: roll, pitch, yaw)&amp;#xa;- rate_dps (gyro_filtered)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;fontSize=12;align=center;" parent="1" vertex="1">
+          <mxGeometry x="580" y="90" width="250" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="301" value="g_fc.est (Độ cao / Vertical)&amp;#xa;&amp;#xa;- altitude_m&amp;#xa;- climb_rate_mps&amp;#xa;- position_m.z = -altitude_m&amp;#xa;- velocity_mps.z = -climb_rate" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;fontSize=12;align=center;" parent="1" vertex="1">
+          <mxGeometry x="580" y="330" width="250" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="302" value="g_fc.est (Vị trí &amp; Vận tốc ngang)&amp;#xa;&amp;#xa;- velocity_mps.x, y (vn, ve)&amp;#xa;- position_m.x, y&amp;#xa;- position_valid (flag)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;fontSize=12;align=center;" parent="1" vertex="1">
+          <mxGeometry x="580" y="620" width="250" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="1000" value="gyro, accel" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=1.0;exitY=0.5;entryX=0.0;entryY=0.5;" edge="1" parent="1" source="100" target="200">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="1001" value="attitude_q, Euler, bg" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=1.0;exitY=0.5;entryX=0.0;entryY=0.5;" edge="1" parent="1" source="200" target="300">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="1002" value="Rotation matrix R" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=0.5;exitY=1.0;entryX=0.5;entryY=0.0;" edge="1" parent="1" source="200" target="201">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="1003" value="accel" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=0.75;exitY=1.0;entryX=0.0;entryY=0.5;" edge="1" parent="1" source="100" target="201">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="1004" value="a_up" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=0.5;exitY=1.0;entryX=0.5;entryY=0.0;" edge="1" parent="1" source="201" target="202">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="1005" value="a_ned.x, y" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=0.25;exitY=1.0;entryX=0.75;entryY=0.0;" edge="1" parent="1" source="201" target="204">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="1006" value="altitude_rel_m" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=1.0;exitY=0.5;entryX=0.0;entryY=0.5;" edge="1" parent="1" source="101" target="202">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="1007" value="range_m" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=1.0;exitY=0.5;entryX=0.0;entryY=0.75;" edge="1" parent="1" source="102" target="202">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="1008" value="altitude, climb_rate" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=1.0;exitY=0.5;entryX=0.0;entryY=0.5;" edge="1" parent="1" source="202" target="301">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="1009" value="tilt_cos / R" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=0.25;exitY=1.0;entryX=0.75;entryY=0.0;" edge="1" parent="1" source="200" target="203">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="1010" value="range_m" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=0.5;exitY=1.0;entryX=0.0;entryY=0.25;" edge="1" parent="1" source="102" target="203">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="1011" value="gyro (for rotation comp)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=0.25;exitY=1.0;entryX=0.0;entryY=0.1;" edge="1" parent="1" source="100" target="203">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="1012" value="flow_x, y" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=1.0;exitY=0.5;entryX=0.0;entryY=0.75;" edge="1" parent="1" source="103" target="203">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="1013" value="v_ned (measured)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=0.5;exitY=1.0;entryX=0.5;entryY=0.0;" edge="1" parent="1" source="203" target="204">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="1014" value="vn, ve" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=0.5;exitY=1.0;entryX=0.5;entryY=0.0;" edge="1" parent="1" source="204" target="205">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="1015" value="velocity_mps.x, y" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=1.0;exitY=0.5;entryX=0.0;entryY=0.25;" edge="1" parent="1" source="204" target="302">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="1016" value="position_m.x, y" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=1.0;exitY=0.5;entryX=0.0;entryY=0.75;" edge="1" parent="1" source="205" target="302">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

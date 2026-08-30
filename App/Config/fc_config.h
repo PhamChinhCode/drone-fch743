@@ -244,7 +244,7 @@
 #define RATE_PID_PITCH_KD 0.00000001f
 
 /* Trục yaw thường KHÔNG cần D: nó bị hãm sẵn bởi lực cản khí động của cánh. */
-#define RATE_PID_YAW_KP 0.00005f
+#define RATE_PID_YAW_KP 0.0002f
 /*
  * Trục YAW là trục CẦN KHÂU I NHẤT, và cũng là trục duy nhất không có gì tự
  * kéo về vị trí cũ.
@@ -308,6 +308,21 @@
  * Không có nó thì lệch 60° sẽ đòi 300 °/s và máy bay giật rất mạnh khi bạn
  * bật chế độ ANGLE lúc đang nghiêng nhiều.
  */
+/*
+ * Bu do lech lap dat IMU so voi khung, don vi DO.
+ *
+ * Cong thang vao goc muc tieu nen no bu duoc o ca ANGLE, ALTHOLD va POSHOLD.
+ *
+ * CACH DO: dat may bay len mat da kiem phang bang nivo (dung tin cai ban),
+ * doc roll/pitch o `mode 16`, roi dat trim bang chinh so doc duoc DOI DAU.
+ * Vi du doc ra roll +0,4 va pitch +0,9 thi dat -0,4 va -0,9.
+ *
+ * Dai +-10 do la rong hon nhieu so voi moi sai so lap dat hop ly - lech qua
+ * vai do thi phai ke lai bo mach chu khong bu bang phan mem.
+ */
+#define ANGLE_TRIM_ROLL_DEG 1.0f
+#define ANGLE_TRIM_PITCH_DEG 0.0f
+
 #define ANGLE_MAX_RATE_DPS 200.0f
 
 /*
@@ -385,14 +400,14 @@
  * 6°/(m/s) nghĩa là trôi 1 m/s thì nghiêng 6° để hãm, cho gia tốc hãm
  * g·tan(6°) ≈ 1,0 m/s² — dập hết 1 m/s trong khoảng một giây. Êm, không giật.
  */
-#define POSHOLD_VEL_KP 2.0f
+#define POSHOLD_VEL_KP 8.0f
 
 /*
  * Khâu I chống GIÓ. Gió thổi đều là một nhiễu loạn không đổi; chỉ có P thì
  * máy bay đứng ở một độ nghiêng cân bằng nhưng VẪN TRÔI đều — đúng bài toán
  * đã gặp ở trục yaw.
  */
-#define POSHOLD_VEL_KI 0.5f
+#define POSHOLD_VEL_KI 0.0f
 #define POSHOLD_I_LIMIT_DEG 8.0f
 
 /* Trần nghiêng. Nghiêng nhiều thì flow bị cổng nghiêng từ chối, mất luôn
@@ -409,7 +424,7 @@
  *
  * Chỉnh SAU CÙNG, khi vòng vận tốc đã đứng yên gọn gàng.
  */
-#define POSHOLD_POS_KP 0.2f
+#define POSHOLD_POS_KP 0.0f
 
 /* ==========================================================================
  * Giữ độ cao (ALTHOLD) — cần ga điều khiển TỐC ĐỘ LÊN thay vì lực đẩy
@@ -1044,6 +1059,20 @@
 #define EST_FLOW_MAX_TILT_DEG 20.0f
 
 /* Độ tin cậy. Flow ồn hơn baro nhiều vì phụ thuộc kết cấu mặt sàn. */
+/*
+ * Bao lau khong chap nhan duoc mau flow thi coi nhu MAT uoc luong van toc.
+ *
+ * Khong co phep do thi bo loc chi tich phan gia toc ke. O 15 do nghieng, gia
+ * toc ngang khoang 2,6 m/s^2, tuc chi NUA GIAY da tich luy 1,3 m/s sai so.
+ *
+ * 300 ms la thoa hiep: du dai de bo qua vai mau bi tu choi le te khi nghieng
+ * thoang qua, du ngan de cat vong phan hoi duong truoc khi no kip lon.
+ *
+ * Qua NGAN -> co bao mat lien tuc, POSHOLD chop tat giua giu vi tri va ANGLE.
+ * Qua DAI  -> khong cat duoc vong chay tron, drone lac vong tron ban kinh lon dan.
+ */
+#define EST_FLOW_TIMEOUT_MS 300
+
 #define EST_FLOW_NOISE_MPS 0.20f
 #define EST_ACC_XY_NOISE_MPS2 0.8f
 #define EST_ACC_XY_BIAS_WALK 0.02f

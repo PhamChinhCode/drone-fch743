@@ -78,6 +78,10 @@ P(angle_pid_kp,          float, PT_F32, 0, 0.5f,  20.0f,   ANGLE_PID_KP)
 P(angle_max_lean_deg,    float, PT_F32, 0, 5.0f,  60.0f,   ANGLE_MAX_LEAN_DEG)
 P(angle_max_rate_dps,    float, PT_F32, 0, 30.0f, 600.0f,  ANGLE_MAX_RATE_DPS)
 
+/* Bu do lech lap dat IMU. Do tren mat phang roi dat bang so doc duoc DOI DAU. */
+P(angle_trim_roll_deg,   float, PT_F32, 0, -10.0f, 10.0f, ANGLE_TRIM_ROLL_DEG)
+P(angle_trim_pitch_deg,  float, PT_F32, 0, -10.0f, 10.0f, ANGLE_TRIM_PITCH_DEG)
+
 /* ==========================================================================
  * Giữ vận tốc bằng optical flow (POSHOLD) — vòng ngoài cùng
  * ========================================================================== */
@@ -226,6 +230,9 @@ P(mag_odr_hz,                uint16_t, PT_U16, PARAM_FLAG_REBOOT, 1.0f, 200.0f, 
 P(mag_update_rate_hz,        uint16_t, PT_U16, 0, 1.0f,   100.0f,  MAG_UPDATE_RATE_HZ)
 P(baro_calib_sample_count,   uint16_t, PT_U16, 0, 10.0f,  500.0f,  BARO_CALIB_SAMPLE_COUNT)
 P(flow_range_max_mm,         uint16_t, PT_U16, 0, 500.0f, 12000.0f, FLOW_RANGE_MAX_MM)
+
+/* Mat flow bao lau thi ha co tin cay. Xem giai thich trong fc_config.h. */
+P(est_flow_timeout_ms,       uint16_t, PT_U16, 0, 50.0f,  2000.0f, EST_FLOW_TIMEOUT_MS)
 
 /*
  * BB_ENABLE va BB_RATE_HZ CO Y KHONG nam trong bang nay.

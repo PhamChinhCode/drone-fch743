@@ -76,14 +76,7 @@ void HAL_PCD_MspInit(PCD_HandleTypeDef* pcdHandle)
   /** Initializes the peripherals clock
   */
     PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_USB;
-    PeriphClkInitStruct.PLL3.PLL3M = 5;
-    PeriphClkInitStruct.PLL3.PLL3N = 48;
-    PeriphClkInitStruct.PLL3.PLL3P = 2;
-    PeriphClkInitStruct.PLL3.PLL3Q = 5;
-    PeriphClkInitStruct.PLL3.PLL3R = 2;
-    PeriphClkInitStruct.PLL3.PLL3RGE = RCC_PLL3VCIRANGE_2;
-    PeriphClkInitStruct.PLL3.PLL3FRACN = 0;
-    PeriphClkInitStruct.UsbClockSelection = RCC_USBCLKSOURCE_PLL3;
+    PeriphClkInitStruct.UsbClockSelection = RCC_USBCLKSOURCE_HSI48;
     if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
     {
       Error_Handler();
@@ -112,6 +105,46 @@ void HAL_PCD_MspInit(PCD_HandleTypeDef* pcdHandle)
     HAL_NVIC_SetPriority(OTG_FS_IRQn, 12, 0);
     HAL_NVIC_EnableIRQ(OTG_FS_IRQn);
   /* USER CODE BEGIN USB_OTG_FS_MspInit 1 */
+
+  /*
+   * ---- Dat lai xung USB ve PLL3, GHI DE lua chon HSI48 o tren ----
+   *
+   * CubeMX (sau lan gen 29/08) chon HSI48. Voi bo mach nay HSI48 KHONG chay
+   * duoc lam xung cho loi USB: da do bang GDB, ket vinh vien trong
+   * USB_CoreReset voi GRSTCTL bit CSRST khong bao gio tu xoa - tuc loi USB
+   * khong nhan duoc xung PHY. Bo mach im hoan toan ngay tu luc khoi dong.
+   *
+   * Da loai tru:
+   *   - Nguon 3,3 V cho USB: PWR_CR3 bit USB33RDY = 1, hop le.
+   *   - AHB ban: GRSTCTL bit AHBIDL = 1, ranh.
+   *   - HSI48 chua san sang: RCC_CR bit HSI48RDY = 1.
+   *   - Khoi CRS tu viet: go han di van treo y nguyen.
+   *
+   * PLL3 thi da chay duoc that tren chinh bo nay. HSE 25 MHz / 5 = 5 MHz,
+   * x48 = 240 MHz, / Q=5 = 48 MHz.
+   *
+   * Dat o MspInit 1 (CHAY SAU khoi cau hinh xung cua CubeMX o dau ham) nen
+   * no ghi de duoc, va van nam trong vung USER CODE nen Generate Code lai
+   * khong mat.
+   */
+  {
+    RCC_PeriphCLKInitTypeDef usb_clk = {0};
+
+    usb_clk.PeriphClockSelection = RCC_PERIPHCLK_USB;
+    usb_clk.PLL3.PLL3M     = 5;
+    usb_clk.PLL3.PLL3N     = 48;
+    usb_clk.PLL3.PLL3P     = 2;
+    usb_clk.PLL3.PLL3Q     = 5;
+    usb_clk.PLL3.PLL3R     = 2;
+    usb_clk.PLL3.PLL3RGE   = RCC_PLL3VCIRANGE_2;
+    usb_clk.PLL3.PLL3FRACN = 0;
+    usb_clk.UsbClockSelection = RCC_USBCLKSOURCE_PLL3;
+
+    if (HAL_RCCEx_PeriphCLKConfig(&usb_clk) != HAL_OK)
+    {
+      Error_Handler();
+    }
+  }
 
   /* USER CODE END USB_OTG_FS_MspInit 1 */
   }
