@@ -705,7 +705,7 @@ static void emit_header(void)
 #if MAG_SOURCE == MAG_SOURCE_SHUB
         wr_str(&w, "     mx     my     mz |    Btot |  raw_x  raw_y  raw_z |    hz |     count |  err  nack  busy | tt");
 #elif MAG_SOURCE == MAG_SOURCE_I2C
-        wr_str(&w, "     mx     my     mz |    Btot |  raw_x  raw_y  raw_z | dt_ms |     count |  err  lost stale | tt");
+        wr_str(&w, "     mx     my     mz |    Btot |  raw_x  raw_y  raw_z | dt_ms |     count |  err  lost stale |   yerr    mrej | tt");
 #else
         wr_str(&w, "     mx     my     mz |    Btot |  raw_x  raw_y  raw_z | (MAG_SOURCE = NONE, khong co du lieu) | tt");
 #endif
@@ -1989,6 +1989,12 @@ static void emit_log(void)
  *             that khong thi xem cot count co tang du nhip khong.
  *   stale     so lan doc lai dung mau cu (bit RDY/DRDY chua len) vi hoi vong
  *             nhanh hon ODR cua chip.
+ *   yerr      SAI SO HUONG MUI lan do gan nhat, do. Day la thu EKF dang
+ *             dung de sua yaw. Phai dao dong quanh 0; lech mot chieu keo
+ *             dai nghia la do lech tu thien dat sai hoac tu ke bi nhieu.
+ *   mrej      so mau bi EKF LOAI (nghieng qua, |B| lech qua, hoac doi moi
+ *             vuot cong). Tang deu khi len ga = nhieu dong dong co - do la
+ *             cong |B| dang lam dung viec cua no.
  */
 static void emit_mag(void)
 {
@@ -2044,6 +2050,10 @@ static void emit_mag(void)
     wr_i32(&w, (int32_t)m->error_count, 5);
     wr_i32(&w, (int32_t)mag_i2c_bus_lost(), 6);
     wr_i32(&w, (int32_t)mag_i2c_stale_reads(), 6);
+    wr_str(&w, " |");
+    /* Hai cot cua khau HOP NHAT YAW, khong phai cua driver. */
+    wr_fix(&w, ekf_attitude_mag_yaw_err_deg(), 1, 7);
+    wr_i32(&w, (int32_t)ekf_attitude_mag_rejects(), 8);
     wr_str(&w, " | ");
 
     if (m->chip_id == 0u) {
@@ -2055,9 +2065,12 @@ static void emit_mag(void)
     } else if (!m->calibrated) {
         wr_str(&w, mag_i2c_variant_name());
         wr_str(&w, " - CHUA HIEU CHUAN (xem GD4 trong KE_HOACH_LA_BAN_I2C.md)");
+    } else if (!ekf_attitude_mag_enabled()) {
+        wr_str(&w, "OK - hop nhat yaw DANG TAT (est_mag_yaw_enable=0)");
+    } else if (!ekf_attitude_mag_aligned()) {
+        wr_str(&w, "OK - dang cho chot huong lan dau");
     } else {
-        wr_str(&w, mag_i2c_variant_name());
-        wr_str(&w, " OK");
+        wr_str(&w, "OK - dang sua yaw cho EKF");
     }
 #else
     wr_i32(&w, (int32_t)m->sample_count, 10);

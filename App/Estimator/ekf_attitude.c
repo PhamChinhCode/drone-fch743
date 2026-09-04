@@ -29,6 +29,15 @@ static float   s_P[N][N];        /* hiệp phương sai của trạng thái sai 
 static float   s_R[3][3];        /* ma trận xoay hiện tại, thân -> NED      */
 static bool    s_valid;
 
+/* --- Trạng thái hợp nhất từ kế. Định nghĩa dùng ở mục "Cập nhật bằng từ
+ * kế" phía dưới; khai báo ở đây vì ekf_attitude_init() đặt lại chúng. --- */
+static bool     s_mag_aligned;   /* đã chốt hướng lần đầu chưa            */
+static bool     s_mag_ref_valid;
+static float    s_mag_ref;       /* |B| tham chiếu, học ở mẫu hợp lệ đầu  */
+static float    s_mag_yaw_err;   /* sai số yaw lần gần nhất, rad          */
+static uint32_t s_mag_updates;
+static uint32_t s_mag_rejects;
+
 /* ==========================================================================
  * Đại số ma trận cỡ nhỏ
  *
@@ -160,6 +169,13 @@ void ekf_attitude_init(void)
     s_bias  = (vec3f_t){ 0.0f, 0.0f, 0.0f };
     s_valid = false;
 
+    s_mag_aligned   = false;
+    s_mag_ref_valid = false;
+    s_mag_ref       = 0.0f;
+    s_mag_yaw_err   = 0.0f;
+    s_mag_updates   = 0;
+    s_mag_rejects   = 0;
+
     memset(s_P, 0, sizeof(s_P));
 
     /*
@@ -275,6 +291,107 @@ static void predict(vec3f_t gyro_rad, float dt)
 
     memcpy(s_P, Pn, sizeof(s_P));
     m66_symmetrize(s_P);
+}
+
+/* ==========================================================================
+ * Tiêm vector sai số vào trạng thái danh nghĩa
+ *
+ * Dùng chung cho MỌI phép cập nhật (accel và từ kế). Tách ra vì phần xử lý
+ * bias yaw phía dưới rất tinh tế — nhân đôi nó ở hai chỗ là cách chắc chắn
+ * nhất để hai bản trôi khỏi nhau theo thời gian.
+ *
+ * Chỉ đụng tới trạng thái danh nghĩa và bias. Ma trận hiệp phương sai do
+ * từng phép cập nhật tự lo, vì dạng Joseph khác nhau giữa phép đo ba chiều
+ * (accel) và phép đo vô hướng (từ kế).
+ * ========================================================================== */
+
+static void apply_correction(const float dx[N])
+{
+    /*
+     * --- Tiêm sai số vào trạng thái danh nghĩa rồi xoá ---
+     * δq ≈ (1, δθ/2) với góc nhỏ. Nhân bên PHẢI vì δθ định nghĩa trong hệ thân.
+     */
+    const quatf_t dq = quat_normalize(
+        (quatf_t){ 1.0f, 0.5f * dx[0], 0.5f * dx[1], 0.5f * dx[2] });
+
+    s_q = quat_normalize(quat_mul(s_q, dq));
+    quat_to_matrix(s_q, s_R);
+
+    s_bias.x += dx[3];
+    s_bias.y += dx[4];
+
+    /*
+     * ================= BIAS YAW: ĐÓNG BĂNG THEO MẶC ĐỊNH =================
+     *
+     * Gia tốc kế đo hướng trọng lực. Xoay quanh trục thẳng đứng KHÔNG làm đổi
+     * hướng trọng lực, nên không có gì trong phép đo này mang thông tin về
+     * yaw — ma trận H hạng 2, nhân không gian nằm đúng dọc trục yaw.
+     *
+     * Trạng thái bias yaw vì thế KHÔNG QUAN SÁT ĐƯỢC. Nó chỉ nhúc nhích qua
+     * hiệp phương sai chéo với sai số góc, mà thứ đẩy nó khi máy bay nằm im
+     * chính là nhiễu của gia tốc kế. Một bước ngẫu nhiên không có lực kéo về.
+     *
+     * ĐO ĐƯỢC THẬT, 28/08/2026, máy bay giữ cố định trên giá:
+     *
+     *     con quay thật (gz, 508 mẫu)      +0,011 °/s  =   +0,7 độ/phút
+     *     bias EKF tự ước lượng (bgz)       3,610 °/s  = −216,6 độ/phút
+     *     trôi yaw quan sát (2262 mẫu)                   −218,2 độ/phút
+     *
+     * Sai lệch giữa hai dòng cuối là 0,7 %: bộ lọc tự chế ra 99,7 % lượng
+     * trôi, rồi trừ nó khỏi một con quay vốn đã sạch.
+     *
+     * Cùng phép đo hai mươi phút trước cho bgz = 0,12 và trôi 9,45 độ/phút —
+     * vẫn đúng tỉ lệ. Chính sự thất thường đó là chữ ký của một bước ngẫu
+     * nhiên không bị ràng buộc.
+     *
+     * Khi không có phép đo nào, ước lượng tốt nhất của một đại lượng là GIÁ
+     * TRỊ TIÊN NGHIỆM — mà giá trị đó thì hiệu chuẩn lúc khởi động đã đo, với
+     * sai số chuẩn của trung bình 2000 mẫu chỉ khoảng 0,002 °/s. Để bộ lọc
+     * "cải thiện" con số đó bằng dữ liệu không chứa thông tin thì chỉ làm nó
+     * tệ đi.
+     *
+     * Roll và pitch KHÔNG bị đóng băng: trọng lực quan sát được hai trục đó,
+     * nên ước lượng bias ở đấy là đúng đắn và có ích.
+     *
+     * Lắp từ kế vào thì bias yaw trở nên quan sát được — lúc đó bật lại bằng
+     * `set est_yaw_bias_learn=1`.
+     * ===================================================================== */
+    if (yaw_bias_learning()) {
+        s_bias.z += dx[5];
+    }
+
+    /*
+     * Chặn bias. Bias trục Z không quan sát được nên nếu để tự do nó sẽ trôi
+     * theo nhiễu cho tới khi thành số vô lý và kéo cả ước lượng góc đi theo.
+     */
+    const float lim = g_params.est_gyro_bias_max_dps * FC_DEG_TO_RAD;
+    s_bias.x = fc_constrainf(s_bias.x, -lim, lim);
+    s_bias.y = fc_constrainf(s_bias.y, -lim, lim);
+    s_bias.z = fc_constrainf(s_bias.z, -lim, lim);
+
+    if (!yaw_bias_learning()) {
+        /*
+         * Tách hẳn trạng thái bias yaw khỏi phần còn lại của ma trận hiệp
+         * phương sai.
+         *
+         * Chỉ bỏ qua dx[5] thôi là chưa đủ: các số hạng chéo P[5][k] vẫn tồn
+         * tại, nên bộ lọc vẫn tính ra độ lợi cho nó và vẫn để nó bóp méo phép
+         * cập nhật của những trạng thái khác. Xoá hàng và cột 5, giữ lại một
+         * đường chéo nhỏ, là cách nói đúng đắn rằng "đại lượng này đã biết và
+         * không liên quan tới các đại lượng kia".
+         *
+         * Ma trận vẫn nửa xác định dương vì thao tác này chỉ tách rời một
+         * trạng thái, không tạo ra tương quan mới.
+         */
+        for (int k = 0; k < N; k++) {
+            s_P[5][k] = 0.0f;
+            s_P[k][5] = 0.0f;
+        }
+        s_P[5][5] = 1.0e-12f;
+    } else if (s_P[5][5] > lim * lim) {
+        /* Phương sai bias yaw chỉ tăng chứ không bao giờ giảm — phải chặn. */
+        s_P[5][5] = lim * lim;
+    }
 }
 
 /* ==========================================================================
@@ -402,91 +519,191 @@ static void update_accel(vec3f_t a)
     memcpy(s_P, Pn, sizeof(s_P));
     m66_symmetrize(s_P);
 
+    apply_correction(dx);
+}
+
+/* ==========================================================================
+ * Cập nhật bằng từ kế — CHỈ sửa YAW
+ *
+ * VÌ SAO KHÔNG HỢP NHẤT CẢ VECTOR BA TRỤC:
+ *   Hợp nhất trọn vector cũng sửa được roll/pitch, nhưng ở hai trục đó gia
+ *   tốc kế vốn đã tốt hơn nhiều. Đổi lại, mọi sai lệch của từ kế — nhiễu
+ *   dòng động cơ, khối thép đi ngang, hiệu chuẩn còn dư — sẽ chảy thẳng vào
+ *   roll/pitch, tức vào đúng hai trục mà vòng điều khiển dựa vào để giữ máy
+ *   bay không lật. Không đáng đánh đổi.
+ *
+ *   Bản này chỉ rút đúng thứ gia tốc kế KHÔNG thể cho: hướng mũi.
+ *
+ * PHÉP ĐO:
+ *   Chiếu vector từ trường (hệ THÂN, đã hiệu chuẩn) sang NED bằng ước lượng
+ *   hiện tại. Nếu ước lượng đúng thì hình chiếu ngang phải chỉ đúng bắc từ,
+ *   tức thành phần đông bằng 0. Góc lệch khỏi bắc CHÍNH LÀ sai số yaw:
+ *
+ *       e = atan2(m_ned.y, m_ned.x) - độ_lệch_từ_thiên
+ *
+ *   Dấu: e là "ước lượng TRỪ sự thật", nên lượng hiệu chỉnh là -e.
+ *
+ * H = HÀNG THỨ BA của R, tức trục "xuống" của NED biểu diễn trong hệ THÂN.
+ *   Quay quanh đúng trục đó chính là đổi hướng mũi.
+ *
+ *   Đáng chú ý: đó cũng đúng là hướng của vector trọng lực trong
+ *   update_accel, mà H của accel là [gb]× nên nhân không gian của nó nằm dọc
+ *   gb. Nói cách khác H của từ kế nằm GỌN trong nhân không gian của H của
+ *   accel: hai phép đo bù nhau chính xác, không tranh nhau trục nào.
+ * ========================================================================== */
+
+static float wrap_pi(float a)
+{
+    while (a >  FC_PI) { a -= 2.0f * FC_PI; }
+    while (a < -FC_PI) { a += 2.0f * FC_PI; }
+    return a;
+}
+
+/** Xoay trạng thái danh nghĩa quanh trục "xuống" của NED một góc `ang`. */
+static void yaw_rotate(float ang)
+{
     /*
-     * --- Tiêm sai số vào trạng thái danh nghĩa rồi xoá ---
-     * δq ≈ (1, δθ/2) với góc nhỏ. Nhân bên PHẢI vì δθ định nghĩa trong hệ thân.
+     * Trục quay lấy trong hệ THÂN (hàng ba của R) để nhân bên PHẢI, đúng quy
+     * ước cả file này đang dùng. Dùng quaternion trục-góc ĐẦY ĐỦ chứ không
+     * xấp xỉ góc nhỏ: lần chốt hướng đầu tiên có thể lệch tới 180°.
      */
-    const quatf_t dq = quat_normalize(
-        (quatf_t){ 1.0f, 0.5f * dx[0], 0.5f * dx[1], 0.5f * dx[2] });
+    const float sn = sinf(ang * 0.5f);
+    const quatf_t dq = { cosf(ang * 0.5f),
+                         s_R[2][0] * sn, s_R[2][1] * sn, s_R[2][2] * sn };
 
     s_q = quat_normalize(quat_mul(s_q, dq));
     quat_to_matrix(s_q, s_R);
+}
 
-    s_bias.x += dx[3];
-    s_bias.y += dx[4];
+void ekf_attitude_update_mag(vec3f_t mag_body)
+{
+    if (!s_valid || g_params.est_mag_yaw_enable == 0u) {
+        return;
+    }
 
-    /*
-     * ================= BIAS YAW: ĐÓNG BĂNG THEO MẶC ĐỊNH =================
-     *
-     * Gia tốc kế đo hướng trọng lực. Xoay quanh trục thẳng đứng KHÔNG làm đổi
-     * hướng trọng lực, nên không có gì trong phép đo này mang thông tin về
-     * yaw — ma trận H hạng 2, nhân không gian nằm đúng dọc trục yaw.
-     *
-     * Trạng thái bias yaw vì thế KHÔNG QUAN SÁT ĐƯỢC. Nó chỉ nhúc nhích qua
-     * hiệp phương sai chéo với sai số góc, mà thứ đẩy nó khi máy bay nằm im
-     * chính là nhiễu của gia tốc kế. Một bước ngẫu nhiên không có lực kéo về.
-     *
-     * ĐO ĐƯỢC THẬT, 28/08/2026, máy bay giữ cố định trên giá:
-     *
-     *     con quay thật (gz, 508 mẫu)      +0,011 °/s  =   +0,7 độ/phút
-     *     bias EKF tự ước lượng (bgz)       3,610 °/s  = −216,6 độ/phút
-     *     trôi yaw quan sát (2262 mẫu)                   −218,2 độ/phút
-     *
-     * Sai lệch giữa hai dòng cuối là 0,7 %: bộ lọc tự chế ra 99,7 % lượng
-     * trôi, rồi trừ nó khỏi một con quay vốn đã sạch.
-     *
-     * Cùng phép đo hai mươi phút trước cho bgz = 0,12 và trôi 9,45 độ/phút —
-     * vẫn đúng tỉ lệ. Chính sự thất thường đó là chữ ký của một bước ngẫu
-     * nhiên không bị ràng buộc.
-     *
-     * Khi không có phép đo nào, ước lượng tốt nhất của một đại lượng là GIÁ
-     * TRỊ TIÊN NGHIỆM — mà giá trị đó thì hiệu chuẩn lúc khởi động đã đo, với
-     * sai số chuẩn của trung bình 2000 mẫu chỉ khoảng 0,002 °/s. Để bộ lọc
-     * "cải thiện" con số đó bằng dữ liệu không chứa thông tin thì chỉ làm nó
-     * tệ đi.
-     *
-     * Roll và pitch KHÔNG bị đóng băng: trọng lực quan sát được hai trục đó,
-     * nên ước lượng bias ở đấy là đúng đắn và có ích.
-     *
-     * Lắp từ kế vào thì bias yaw trở nên quan sát được — lúc đó bật lại bằng
-     * `set est_yaw_bias_learn=1`.
-     * ===================================================================== */
-    if (yaw_bias_learning()) {
-        s_bias.z += dx[5];
+    const float bnorm = vec3f_norm(mag_body);
+    if (bnorm < 1.0e-3f) {
+        s_mag_rejects++;
+        return;
     }
 
     /*
-     * Chặn bias. Bias trục Z không quan sát được nên nếu để tự do nó sẽ trôi
-     * theo nhiễu cho tới khi thành số vô lý và kéo cả ước lượng góc đi theo.
+     * Nghiêng nhiều thì phép chiếu sang NED khuếch đại sai số roll/pitch
+     * thành sai số yaw — đúng lúc ta ít tin nó nhất.
      */
-    const float lim = g_params.est_gyro_bias_max_dps * FC_DEG_TO_RAD;
-    s_bias.x = fc_constrainf(s_bias.x, -lim, lim);
-    s_bias.y = fc_constrainf(s_bias.y, -lim, lim);
-    s_bias.z = fc_constrainf(s_bias.z, -lim, lim);
-
-    if (!yaw_bias_learning()) {
-        /*
-         * Tách hẳn trạng thái bias yaw khỏi phần còn lại của ma trận hiệp
-         * phương sai.
-         *
-         * Chỉ bỏ qua dx[5] thôi là chưa đủ: các số hạng chéo P[5][k] vẫn tồn
-         * tại, nên bộ lọc vẫn tính ra độ lợi cho nó và vẫn để nó bóp méo phép
-         * cập nhật của những trạng thái khác. Xoá hàng và cột 5, giữ lại một
-         * đường chéo nhỏ, là cách nói đúng đắn rằng "đại lượng này đã biết và
-         * không liên quan tới các đại lượng kia".
-         *
-         * Ma trận vẫn nửa xác định dương vì thao tác này chỉ tách rời một
-         * trạng thái, không tạo ra tương quan mới.
-         */
-        for (int k = 0; k < N; k++) {
-            s_P[5][k] = 0.0f;
-            s_P[k][5] = 0.0f;
-        }
-        s_P[5][5] = 1.0e-12f;
-    } else if (s_P[5][5] > lim * lim) {
-        /* Phương sai bias yaw chỉ tăng chứ không bao giờ giảm — phải chặn. */
-        s_P[5][5] = lim * lim;
+    if (s_R[2][2] < cosf(g_params.est_mag_max_tilt_deg * FC_DEG_TO_RAD)) {
+        s_mag_rejects++;
+        return;
     }
+
+    /*
+     * |B| tham chiếu học ở mẫu hợp lệ ĐẦU TIÊN — lúc đó máy bay còn nằm yên
+     * dưới đất và động cơ chưa quay, nên đó là số sạch nhất có được.
+     */
+    if (!s_mag_ref_valid) {
+        s_mag_ref       = bnorm;
+        s_mag_ref_valid = true;
+    }
+
+    /*
+     * CỔNG QUAN TRỌNG NHẤT: độ lớn từ trường lệch nhiều so với tham chiếu
+     * nghĩa là có thứ khác đang cộng thêm từ trường — gần như luôn là dòng
+     * điện qua dây nguồn khi lên ga. Hiệu chuẩn sắt cứng KHÔNG bù được loại
+     * nhiễu đó, vì nó thay đổi theo dòng chứ không cố định. Bỏ mẫu còn hơn
+     * tin nó.
+     */
+    if (fabsf(bnorm - s_mag_ref) > g_params.est_mag_field_tol * s_mag_ref) {
+        s_mag_rejects++;
+        return;
+    }
+
+    const vec3f_t mn = ekf_attitude_body_to_ned(mag_body);
+    const float   h2 = mn.x * mn.x + mn.y * mn.y;
+
+    /* Hình chiếu ngang gần bằng 0: từ trường đang dựng đứng, không suy ra
+     * được hướng nào cả. */
+    if (h2 < 1.0e-6f) {
+        s_mag_rejects++;
+        return;
+    }
+
+    const float e = wrap_pi(atan2f(mn.y, mn.x)
+                            - g_params.est_mag_declination_deg * FC_DEG_TO_RAD);
+    s_mag_yaw_err = e;
+
+    /*
+     * Lần đầu: ĐẶT THẲNG hướng mũi thay vì để bộ lọc bò dần tới.
+     *
+     * Lúc khởi động yaw là số tuỳ ý (init_from_accel đặt yaw = 0) nên sai số
+     * ban đầu có thể tới 180°. Để bộ lọc tự kéo về thì vừa mất hàng chục
+     * giây, vừa bơm một lượng đổi mới khổng lồ vào hiệp phương sai.
+     */
+    if (!s_mag_aligned) {
+        yaw_rotate(-e);
+        s_mag_aligned = true;
+        s_mag_updates++;
+        return;
+    }
+
+    /* Đã bám hướng rồi mà còn lệch lớn thì đó là nhiễu, không phải sự thật:
+     * con quay ở 50 Hz không thể bỏ sót một cú xoay 45°. */
+    if (fabsf(e) > EST_MAG_GATE_DEG * FC_DEG_TO_RAD) {
+        s_mag_rejects++;
+        return;
+    }
+
+    const float H[3] = { s_R[2][0], s_R[2][1], s_R[2][2] };
+
+    float PHt[N];
+    for (int i = 0; i < N; i++) {
+        PHt[i] = s_P[i][0] * H[0] + s_P[i][1] * H[1] + s_P[i][2] * H[2];
+    }
+
+    const float sd = g_params.est_mag_yaw_noise_deg * FC_DEG_TO_RAD;
+    const float r  = sd * sd;
+    const float S  = H[0] * PHt[0] + H[1] * PHt[1] + H[2] * PHt[2] + r;
+
+    if (S < 1.0e-12f) {
+        s_mag_rejects++;
+        return;
+    }
+
+    float K[N];
+    for (int i = 0; i < N; i++) {
+        K[i] = PHt[i] / S;
+    }
+
+    /* e là "ước lượng trừ sự thật" nên lượng hiệu chỉnh mang dấu ngược. */
+    float dx[N];
+    for (int i = 0; i < N; i++) {
+        dx[i] = K[i] * (-e);
+    }
+
+    /* Joseph, giống update_accel nhưng H chỉ có đúng một hàng. */
+    float IKH[N][N];
+    for (int i = 0; i < N; i++) {
+        for (int j = 0; j < N; j++) {
+            const float h = (j < 3) ? H[j] : 0.0f;
+
+            IKH[i][j] = ((i == j) ? 1.0f : 0.0f) - K[i] * h;
+        }
+    }
+
+    float tmp[N][N];
+    float Pn[N][N];
+    m66_mul(IKH, s_P, tmp);
+    m66_mul_bt(tmp, IKH, Pn);
+
+    for (int i = 0; i < N; i++) {
+        for (int j = 0; j < N; j++) {
+            Pn[i][j] += r * K[i] * K[j];
+        }
+    }
+    memcpy(s_P, Pn, sizeof(s_P));
+    m66_symmetrize(s_P);
+
+    apply_correction(dx);
+    s_mag_updates++;
 }
 
 /* ==========================================================================
@@ -556,3 +773,13 @@ float ekf_attitude_uncertainty_deg(void)
     const float var = 0.5f * (s_P[0][0] + s_P[1][1]);
     return sqrtf(fmaxf(var, 0.0f)) * FC_RAD_TO_DEG;
 }
+
+/* --- Thống kê hợp nhất từ kế, phục vụ chẩn đoán ------------------------- */
+
+float    ekf_attitude_mag_yaw_err_deg(void) { return s_mag_yaw_err * FC_RAD_TO_DEG; }
+uint32_t ekf_attitude_mag_updates(void)     { return s_mag_updates; }
+uint32_t ekf_attitude_mag_rejects(void)     { return s_mag_rejects; }
+bool     ekf_attitude_mag_aligned(void)     { return s_mag_aligned; }
+
+/* De console khong phai keo them phu thuoc vao bang tham so. */
+bool     ekf_attitude_mag_enabled(void)     { return g_params.est_mag_yaw_enable != 0u; }

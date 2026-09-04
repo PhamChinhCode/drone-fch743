@@ -94,4 +94,35 @@ bool ekf_attitude_is_valid(void);
  */
 float ekf_attitude_uncertainty_deg(void);
 
+/**
+ * Nạp một mẫu từ kế và sửa YAW. Gọi mỗi khi driver có mẫu mới (~50 Hz),
+ * KHÔNG gọi ở nhịp IMU.
+ *
+ * @param mag_body  từ trường hệ THÂN, đã hiệu chuẩn và đã xoay trục
+ *                  (chính là g_fc.mag.field_gauss). Đơn vị không quan trọng
+ *                  vì chỉ dùng HƯỚNG — nhưng phải nhất quán giữa các lần gọi
+ *                  để cổng theo độ lớn còn ý nghĩa.
+ *
+ * Tự bỏ qua khi: est_mag_yaw_enable = 0, bộ lọc chưa hợp lệ, nghiêng quá
+ * est_mag_max_tilt_deg, hoặc |B| lệch quá est_mag_field_tol.
+ */
+void ekf_attitude_update_mag(vec3f_t mag_body);
+
+/* --- Thống kê hợp nhất từ kế, phục vụ chẩn đoán ------------------------- */
+
+/** Sai số hướng mũi của lần đo gần nhất, độ. Nên dao động quanh 0. */
+float ekf_attitude_mag_yaw_err_deg(void);
+
+/** Số mẫu từ kế ĐÃ dùng để sửa yaw. */
+uint32_t ekf_attitude_mag_updates(void);
+
+/** Số mẫu bị LOẠI. Tăng đều khi lên ga = nhiễu dòng động cơ. */
+uint32_t ekf_attitude_mag_rejects(void);
+
+/** true sau khi đã chốt hướng mũi lần đầu từ từ kế. */
+bool ekf_attitude_mag_aligned(void);
+
+/** true khi est_mag_yaw_enable dang bat. */
+bool ekf_attitude_mag_enabled(void);
+
 #endif /* EKF_ATTITUDE_H */

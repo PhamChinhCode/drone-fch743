@@ -23,6 +23,8 @@ static uint32_t s_steps;
  */
 static bool     s_pos_primed;
 static uint32_t s_baro_updates;
+static uint32_t s_mag_updates;
+static uint32_t s_mag_seen;
 static uint32_t s_range_updates;
 static uint32_t s_range_rejected;
 
@@ -69,6 +71,8 @@ void estimator_init(void)
     s_started        = false;
     s_steps          = 0;
     s_baro_updates   = 0;
+    s_mag_updates    = 0;
+    s_mag_seen       = 0;
     s_range_updates  = 0;
     s_range_rejected = 0;
     s_baro_seen      = 0;
@@ -139,6 +143,18 @@ bool estimator_update(uint32_t now_us)
 
     /* Gia tốc ngang hệ NED cho bộ lọc vận tốc — cùng nguồn a_ned ở trên. */
     ekf_velocity_predict(a_ned.x, a_ned.y, dt);
+
+    /*
+     * Từ kế: chỉ nạp mẫu mới. Đây là nguồn DUY NHẤT quan sát được yaw —
+     * gia tốc kế không mang thông tin nào về hướng mũi.
+     */
+    if (g_fc.mag.healthy && !g_fc.mag.overflow &&
+        g_fc.mag.sample_count != s_mag_seen) {
+
+        s_mag_seen = g_fc.mag.sample_count;
+        ekf_attitude_update_mag(g_fc.mag.field_gauss);
+        s_mag_updates++;
+    }
 
     /* Baro: chỉ nạp mẫu mới, và chỉ khi đã có mốc mặt đất. */
     if (g_fc.baro.healthy && g_fc.baro.calibrated &&

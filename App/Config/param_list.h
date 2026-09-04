@@ -207,6 +207,12 @@ P(est_flow_noise_mps,      float, PT_F32, 0, 0.02f,   2.0f,  EST_FLOW_NOISE_MPS)
 P(est_acc_xy_noise_mps2,   float, PT_F32, 0, 0.05f,   5.0f,  EST_ACC_XY_NOISE_MPS2)
 P(est_acc_xy_bias_walk,    float, PT_F32, 0, 0.001f,  0.5f,  EST_ACC_XY_BIAS_WALK)
 
+/* Hop nhat yaw tu tu ke. Xem khoi giai thich trong fc_config.h. */
+P(est_mag_yaw_noise_deg,   float, PT_F32, 0, 1.0f,    45.0f, EST_MAG_YAW_NOISE_DEG)
+P(est_mag_declination_deg, float, PT_F32, 0, -30.0f,  30.0f, EST_MAG_DECLINATION_DEG)
+P(est_mag_max_tilt_deg,    float, PT_F32, 0, 5.0f,    80.0f, EST_MAG_MAX_TILT_DEG)
+P(est_mag_field_tol,       float, PT_F32, 0, 0.05f,   1.0f,  EST_MAG_FIELD_TOL)
+
 /* ==========================================================================
  * Trường 16 bit
  *
@@ -342,4 +348,5 @@ P(est_accel_z_sign,      int8_t,  PT_I8, PARAM_FLAG_DANGER, -1.0f, 1.0f, EST_ACC
  * Xem giai thich kem so lieu do trong fc_config.h va ekf_attitude.c.
  */
 P(est_yaw_bias_learn,    uint8_t, PT_U8, PARAM_FLAG_DANGER, 0.0f, 1.0f, EST_YAW_BIAS_LEARN)
+P(est_mag_yaw_enable,    uint8_t, PT_U8, PARAM_FLAG_DANGER, 0.0f, 1.0f, EST_MAG_YAW_ENABLE)
 

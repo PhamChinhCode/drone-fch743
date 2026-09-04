@@ -1137,6 +1137,69 @@
 #define EST_ACC_XY_NOISE_MPS2 0.8f
 #define EST_ACC_XY_BIAS_WALK 0.02f
 
+/* --------------------------------------------------------------------------
+ * HỢP NHẤT YAW TỪ TỪ KẾ vào EKF góc
+ *
+ * Gia tốc kế đo hướng trọng lực, mà xoay quanh trục đứng không làm đổi hướng
+ * trọng lực — nên yaw KHÔNG quan sát được nếu chỉ có IMU. Từ kế là nguồn duy
+ * nhất bù được chỗ đó. Xem khối "Cập nhật bằng từ kế" trong ekf_attitude.c.
+ *
+ * Chỉ sửa YAW, không đụng roll/pitch: ma trận H nằm gọn theo trục yaw nên sai
+ * lệch của từ kế không có đường rò sang hai trục mà vòng điều khiển dựa vào.
+ * -------------------------------------------------------------------------- */
+
+/*
+ * Công tắc chính. Đặt 0 để tắt hẳn hợp nhất yaw mà không phải nạp lại
+ * firmware — đây là thứ cần tắt đầu tiên nếu nghi từ kế gây vấn đề khi bay.
+ */
+#define EST_MAG_YAW_ENABLE 1
+
+/*
+ * Độ tin cậy của phép đo hướng, tính bằng độ (một xích ma).
+ *
+ * Đặt RỘNG có chủ ý. Sai số thật của một từ kế đã hiệu chuẩn tốt vào khoảng
+ * 2-3°, nhưng trên máy bay còn nhiễu dòng động cơ, rung, và sai số bù nghiêng.
+ * Bộ lọc chỉ cần từ kế ghìm phần TRÔI DÀI HẠN của con quay; đáp ứng nhanh cứ
+ * để con quay lo. Đặt hẹp quá thì mỗi hạt nhiễu từ trường lại giật hướng mũi.
+ */
+#define EST_MAG_YAW_NOISE_DEG 10.0f
+
+/*
+ * Độ lệch từ thiên: góc giữa bắc TỪ và bắc THẬT, dương khi bắc từ lệch sang
+ * đông. Ở Việt Nam khoảng 0 đến -1°, nhỏ tới mức bỏ qua được. Để 0 nghĩa là
+ * yaw của bộ lọc quy chiếu theo bắc TỪ.
+ */
+#define EST_MAG_DECLINATION_DEG 0.0f
+
+/*
+ * Nghiêng quá mức này thì bỏ mẫu: phép chiếu từ hệ thân sang NED khuếch đại
+ * sai số roll/pitch thành sai số yaw, đúng lúc ta ít tin nó nhất.
+ */
+#define EST_MAG_MAX_TILT_DEG 50.0f
+
+/*
+ * Cổng theo ĐỘ LỚN từ trường — cổng quan trọng nhất trong cả khối này.
+ *
+ * |B| lệch khỏi giá trị tham chiếu quá tỉ lệ này thì bỏ mẫu. Từ trường Trái
+ * Đất là hằng số, nên |B| đổi nghĩa là có thứ khác đang cộng vào — gần như
+ * luôn là dòng điện qua dây nguồn khi lên ga. Hiệu chuẩn sắt cứng KHÔNG bù
+ * được loại nhiễu đó vì nó thay đổi theo dòng.
+ *
+ * 0,30 = cho phép lệch 30%. Nới rộng thì nhiễu động cơ lọt vào; siết chặt quá
+ * thì mọi mẫu đều bị loại và từ kế thành vô dụng. Xem cột `mrej` trong
+ * DBG_MODE_MAG để biết đang loại bao nhiêu.
+ */
+#define EST_MAG_FIELD_TOL 0.30f
+
+/*
+ * Cổng đổi mới, độ. Sau khi đã chốt hướng lần đầu, một phép đo lệch hơn ngần
+ * này gần như chắc chắn là nhiễu chứ không phải máy bay vừa xoay thật — con
+ * quay ở 50 Hz không thể bỏ sót một cú xoay 45°.
+ *
+ * KHÔNG phải tham số runtime: đây là ngưỡng an toàn, không phải núm chỉnh.
+ */
+#define EST_MAG_GATE_DEG 45.0f
+
 /* ==========================================================================
  * Nguồn — chia áp trên ADC1_INP11 (PC1) và ADC1_INP10 (PC0)
  * ========================================================================== */

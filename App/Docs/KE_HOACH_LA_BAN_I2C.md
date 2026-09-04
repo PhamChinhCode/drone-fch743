@@ -503,3 +503,82 @@ Board đang chạy firmware đã nạp và verify, hiệu chuẩn đã về đơ
 cho MAGCAL. Việc còn lại đúng bằng GĐ4 bước 2–6 ở trên — không tự động hoá
 được vì phải xoay máy bay đủ 8 góc phần tám và bấm K1.
 
+---
+
+## GĐ6 — Hợp nhất yaw vào EKF (2026-09-04)
+
+### Vì sao chỉ sửa yaw, không hợp nhất cả vector
+
+Hợp nhất trọn vector từ trường cũng sửa được roll/pitch, nhưng ở hai trục đó
+gia tốc kế vốn đã tốt hơn nhiều. Đổi lại, mọi sai lệch của từ kế — nhiễu dòng
+động cơ, khối thép đi ngang, hiệu chuẩn còn dư — sẽ chảy thẳng vào roll/pitch,
+tức vào đúng hai trục vòng điều khiển dựa vào để giữ máy bay không lật.
+
+Bản này chỉ rút đúng thứ gia tốc kế **không thể** cho: hướng mũi.
+
+### Phép đo
+
+Chiếu vector từ trường (hệ thân, đã hiệu chuẩn) sang NED bằng ước lượng hiện
+tại. Ước lượng đúng thì hình chiếu ngang phải chỉ đúng bắc từ, tức thành phần
+đông bằng 0. Góc lệch khỏi bắc chính là sai số yaw:
+
+```
+e = atan2(m_ned.y, m_ned.x) - do_lech_tu_thien
+```
+
+`H` = **hàng thứ ba của R**, tức trục "xuống" của NED biểu diễn trong hệ thân.
+Điểm đẹp của cách này: đó cũng đúng là hướng vector trọng lực trong
+`update_accel`, mà `H` của accel là `[gb]×` nên nhân không gian của nó nằm dọc
+`gb`. Nghĩa là **`H` của từ kế nằm gọn trong nhân không gian của `H` của
+accel** — hai phép đo bù nhau chính xác, không tranh nhau trục nào.
+
+### Bốn cổng bảo vệ
+
+| Cổng | Ngưỡng | Chống gì |
+|---|---|---|
+| `est_mag_yaw_enable` | 0/1 | tắt ngay khi nghi ngờ, không cần nạp lại |
+| `est_mag_max_tilt_deg` | 50° | nghiêng nhiều thì bù nghiêng khuếch đại sai số |
+| `est_mag_field_tol` | 0,30 | **quan trọng nhất** — \|B\| lệch quá 30% nghĩa là có dòng điện cộng thêm từ trường |
+| `EST_MAG_GATE_DEG` | 45° | đổi mới quá lớn sau khi đã bám hướng = nhiễu |
+
+Cổng `est_mag_field_tol` chính là thứ xử lý nhiễu theo ga: hiệu chuẩn sắt cứng
+không bù được loại nhiễu đó vì nó đổi theo dòng, nên cách đúng là **phát hiện
+và bỏ mẫu**.
+
+Lần đầu có mẫu hợp lệ, driver **đặt thẳng** hướng mũi thay vì để bộ lọc bò dần
+— lúc khởi động yaw là số tuỳ ý nên sai số ban đầu có thể tới 180°.
+
+### Kết quả đo trên phần cứng
+
+Mũi chỉ bắc, máy bay nằm ngang, động cơ không quay:
+
+```
+DBG_MODE_MAG:  yerr dao dong -0,5 .. +0,8 do,  mrej = 0
+DBG_MODE_EST:  roll 0,57  pitch 0,41  yaw 1,69  |  do/ph -0,07
+```
+
+| | trước | sau |
+|---|---|---|
+| Trôi yaw | **−218 độ/phút** (đo 28/08, ghi trong ekf_attitude.c) | **−0,07 độ/phút** |
+| Yaw khi mũi chỉ bắc | vô nghĩa (gốc tuỳ ý) | **1,69°** |
+
+### Một sửa phụ
+
+`g_fc.mag.calibrated` trước đây **không bao giờ** được đặt `true` — cả driver
+này lẫn nhánh SHUB đều chỉ đặt `false`. Console vì thế báo "CHUA HIEU CHUAN"
+vĩnh viễn kể cả sau khi đã hiệu chuẩn xong. Nay suy từ chính bộ tham số: khác
+ma trận đơn vị nghĩa là đã hiệu chuẩn.
+
+### Còn nợ
+
+1. **Chưa đo định lượng nhiễu theo ga.** Buộc chặt máy bay, tháo cánh, tăng ga
+   và xem `mrej` cùng `yerr`. `mrej` tăng đều khi lên ga nghĩa là cổng `|B|`
+   đang làm việc — nhưng nếu nó loại gần hết mẫu thì từ kế thành vô dụng lúc
+   bay, phải xoắn dây pin hoặc dời từ kế.
+2. **`est_yaw_bias_learn` vẫn để 0.** Với từ kế, bias yaw về lý thuyết đã quan
+   sát được, nhưng kết quả hiện tại (−0,07 độ/phút) đã đủ tốt khi đóng băng.
+   Bật nó là thay đổi thứ hai — làm sau, và làm riêng.
+3. **Hằng số đổi thang 3000 LSB/Gauss** vẫn chưa xác nhận (\|B\| đọc 0,596 G
+   trong khi Việt Nam ~0,40-0,46 G). Không ảnh hưởng hướng mũi vì góc chỉ phụ
+   thuộc phương, nhưng làm cổng `est_mag_field_tol` lệch chuẩn đôi chút.
+

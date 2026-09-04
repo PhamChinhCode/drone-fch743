@@ -235,9 +235,26 @@ bool mag_i2c_init(void)
 
     memset(s_buf, 0, sizeof(s_buf));
 
-    g_fc.mag.healthy    = false;
-    g_fc.mag.calibrated = false;
-    g_fc.mag.chip_id    = 0;
+    g_fc.mag.healthy = false;
+    g_fc.mag.chip_id = 0;
+
+    /*
+     * "Da hieu chuan" = bo tham so KHONG con la ma tran don vi.
+     *
+     * Truoc day co nay khong bao gio duoc dat true (ca driver nay lan nhanh
+     * SHUB), nen console bao "CHUA HIEU CHUAN" vinh vien ke ca sau khi da do
+     * xong - mot cai nhan sai lam nguoi doc ket luan sai.
+     *
+     * Hieu chuan nam trong g_params chu khong nam trong driver, nen day la
+     * dinh nghia trung thuc duy nhat co the kiem tra duoc tu day.
+     */
+    g_fc.mag.calibrated =
+        (fabsf(g_params.mag_offset_x_g) > 1.0e-6f) ||
+        (fabsf(g_params.mag_offset_y_g) > 1.0e-6f) ||
+        (fabsf(g_params.mag_offset_z_g) > 1.0e-6f) ||
+        (fabsf(g_params.mag_scale_x - 1.0f) > 1.0e-6f) ||
+        (fabsf(g_params.mag_scale_y - 1.0f) > 1.0e-6f) ||
+        (fabsf(g_params.mag_scale_z - 1.0f) > 1.0e-6f);
 
     /* Chip can toi da vai ms ke tu luc co nguon moi tra loi duoc. */
     HAL_Delay(5);
