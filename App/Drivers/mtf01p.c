@@ -154,8 +154,26 @@ static void handle_opflow(const uint8_t *payload, uint16_t size)
         const float height_m = (float)g_fc.flow.range_mm * 0.001f;
         const float k        = (g_params.flow_rad_per_count / dt_s) * height_m;
 
-        g_fc.flow.velocity_mps.x = (float)rx * k;
-        g_fc.flow.velocity_mps.y = (float)ry * k;
+        /*
+         * DOI TRUC SANG QUY UOC THAN: x = TOI TRUOC, y = SANG PHAI.
+         *
+         * Hai kenh tho khong theo quy uoc do. Cam bien duoc lap sao cho
+         * ekf_velocity nhan duoc dung thu no can:
+         *
+         *     bay PHAI -> flow_x DUONG        (vy =  h*(flow_x + gyro_x))
+         *     bay TOI  -> flow_y AM           (vx = -h*(flow_y + gyro_y))
+         *
+         * Nen o day phai hoan vi va doi dau thi ten truong moi dung nghia.
+         * TRUOC DAY gan thang rx->x va ry->y, va chu thich ghi "day may bay
+         * ve phia truoc thi velocity_mps.x phai duong" - ca hai deu SAI:
+         * .x thuc ra la van toc sang phai, .y la am cua van toc tien.
+         *
+         * KHONG dung cho dieu khien - estimator.c doc thang flow_x_raw va
+         * flow_y_raw. Cho nay chi phuc vu hien thi va telemetry, nhung mot
+         * cai nhan sai thi lam nguoi doc ket luan sai, va no da lam that.
+         */
+        g_fc.flow.velocity_mps.x = -(float)ry * k;   /* toi truoc */
+        g_fc.flow.velocity_mps.y =  (float)rx * k;   /* sang phai */
         g_fc.flow.velocity_mps.z = 0.0f;
     } else {
         g_fc.flow.velocity_mps = (vec3f_t){ 0.0f, 0.0f, 0.0f };
