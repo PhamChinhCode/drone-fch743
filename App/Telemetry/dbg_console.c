@@ -9,6 +9,9 @@
 #include "icm20602.h"
 #include "lsm6dsv.h"
 #include "bmp388.h"
+#if MAG_SOURCE == MAG_SOURCE_I2C
+#include "mag_i2c.h"
+#endif
 #include "mtf01p.h"
 #include "crsf.h"
 #include "dshot.h"
@@ -486,16 +489,38 @@ static bool axcal_axis_taken(int k)
  * Khớp bình phương tối thiểu dùng MỌI mẫu nên không phụ thuộc việc có chạm
  * đúng cực trị hay không.
  *
- * Mô hình: điểm nằm trên mặt ellipsoid  dᵀv = 1  với
- *     d = [x², y², z², 2xy, 2xz, 2yz, 2x, 2y, 2z]
+ * Mô hình: điểm nằm trên mặt ellipsoid TRỤC-THẲNG  dᵀv = 1  với
+ *     d = [x², y², z², 2x, 2y, 2z]
  * Tích luỹ trực tiếp phương trình chuẩn tắc AᵀA và Aᵀ1 nên KHÔNG cần lưu mẫu
- * — 45 phép nhân cộng mỗi mẫu, ở 10 Hz là không đáng kể.
+ * — 27 phép nhân cộng mỗi mẫu, ở 20 Hz là không đáng kể.
+ *
+ * ⚠️ VÌ SAO KHÔNG DÙNG 9 THAM SỐ (có số hạng chéo 2xy, 2xz, 2yz):
+ *
+ * Bản trước khớp ellipsoid ĐẦY ĐỦ có xoay rồi rút hệ số tỉ lệ bằng cách lấy
+ * ĐƯỜNG CHÉO của ma trận A. Sai: đường chéo chỉ bằng trị riêng khi ellipsoid
+ * KHÔNG xoay. Có xoay là hệ số tỉ lệ sai, mà rút đúng bằng trị riêng cũng
+ * không cứu được — vì driver chỉ áp được
+ *     cal[i] = (raw[i] - offset[i]) * scale[i]
+ * tức mô hình TRỤC-THẲNG, không có chỗ đặt phép xoay.
+ *
+ * Khớp một mô hình rồi áp một mô hình khác thì kết quả không tối ưu theo bất
+ * kỳ nghĩa nào. Nên khớp ĐÚNG thứ sẽ được áp dụng.
+ *
+ * ĐO TRÊN DỮ LIỆU THẬT (logimu.txt, 800 mẫu, QMC5883P):
+ *     bản 9 tham số + lấy đường chéo : dao động |B| 9,3%
+ *     bản 6 tham số trục-thẳng       : dao động |B| 3,2%
+ * Bỏ 3 ẩn còn làm hệ bớt suy biến khi độ phủ góc không đều — bộ dữ liệu trên
+ * làm hệ 9x9 SUY BIẾN hoàn toàn, còn hệ 6x6 vẫn giải được.
+ *
+ * Cái giá: không bù được sắt mềm có XOAY. Chấp nhận được — sắt mềm trên bo
+ * này đo ra gần như bằng không (ba hệ số tỉ lệ đều ~1,00), và dù có thì
+ * driver cũng không áp được.
  *
  * Dùng double cho bộ tích luỹ: giá trị lên tới x⁴ ~ 1e-2 cộng dồn hàng nghìn
  * lần, float 32 bit sẽ mất chính xác. M7 phải giả lập double bằng phần mềm
- * nhưng ở 10 Hz thì vài micro giây mỗi mẫu là quá rẻ so với độ chính xác.
+ * nhưng ở 20 Hz thì vài micro giây mỗi mẫu là quá rẻ so với độ chính xác.
  */
-#define MAGCAL_N 9
+#define MAGCAL_N 6
 
 static struct {
     double   ata[MAGCAL_N][MAGCAL_N];
@@ -574,42 +599,30 @@ static bool magcal_fit(float off[3], float sc[3], float *rad)
     }
     if (!magcal_solve(m, v)) { return false; }
 
-    /* A đối xứng 3x3 và vector b từ nghiệm. */
-    const double A[3][3] = { { v[0], v[3], v[4] },
-                             { v[3], v[1], v[5] },
-                             { v[4], v[5], v[2] } };
-    const double bb[3] = { v[6], v[7], v[8] };
+    /*
+     * A là ma trận ĐƯỜNG CHÉO — mô hình trục-thẳng không có số hạng chéo.
+     * Nhờ vậy đường chéo CHÍNH LÀ trị riêng, và phép rút hệ số tỉ lệ ở dưới
+     * là đúng chứ không còn là phép xấp xỉ như bản 9 tham số.
+     */
+    const double A[3]  = { v[0], v[1], v[2] };
+    const double bb[3] = { v[3], v[4], v[5] };
 
-    /* Tâm: c = -A⁻¹b, giải bằng Cramer cho 3x3. */
-    const double det = A[0][0]*(A[1][1]*A[2][2] - A[1][2]*A[2][1])
-                     - A[0][1]*(A[1][0]*A[2][2] - A[1][2]*A[2][0])
-                     + A[0][2]*(A[1][0]*A[2][1] - A[1][1]*A[2][0]);
+    for (int i = 0; i < 3; i++) {
+        if (fabs(A[i]) < 1e-18) { return false; }
+    }
 
-    if (fabs(det) < 1e-18) { return false; }
-
+    /* Tâm: c[i] = -b[i]/A[i]. A đường chéo nên không cần Cramer. */
     double c[3];
-    for (int i = 0; i < 3; i++) {
-        double t[3][3];
+    for (int i = 0; i < 3; i++) { c[i] = -bb[i] / A[i]; }
 
-        for (int r = 0; r < 3; r++) {
-            for (int k = 0; k < 3; k++) { t[r][k] = A[r][k]; }
-            t[r][i] = -bb[r];
-        }
-        c[i] = (t[0][0]*(t[1][1]*t[2][2] - t[1][2]*t[2][1])
-              - t[0][1]*(t[1][0]*t[2][2] - t[1][2]*t[2][0])
-              + t[0][2]*(t[1][0]*t[2][1] - t[1][1]*t[2][0])) / det;
-    }
-
-    /* k = 1 + cᵀAc, rồi lấy đường chéo của A/k làm bình phương hệ số tỉ lệ. */
+    /* k = 1 + cᵀAc, rồi A/k cho bình phương hệ số tỉ lệ. */
     double k = 1.0;
-    for (int i = 0; i < 3; i++) {
-        for (int j = 0; j < 3; j++) { k += c[i] * A[i][j] * c[j]; }
-    }
+    for (int i = 0; i < 3; i++) { k += c[i] * A[i] * c[i]; }
     if (k <= 0.0) { return false; }
 
     double d[3];
     for (int i = 0; i < 3; i++) {
-        const double a = A[i][i] / k;
+        const double a = A[i] / k;
 
         if (a <= 0.0) { return false; }
         d[i] = sqrt(a);
@@ -647,10 +660,10 @@ static void emit_header(void)
         wr_str(&w, "t_us,gx_dps,gy_dps,gz_dps,ax_mps2,ay_mps2,az_mps2,temp_c");
         break;
     case DBG_MODE_FLOW:
-        wr_str(&w, "     fx      fy | qual | range_mm | rq |      vx      vy |   dt |    count |  frames | crc | err");
+        wr_str(&w, "     fx      fy | qual | range_mm | rq |   v_fwd   v_rgt |   dt |    count |  frames | crc | err");
         break;
     case DBG_MODE_BARO:
-        wr_str(&w, "   press_pa |   temp |     alt_m |  alt_rel |  ground_pa |   dt |    count |  stale | err | cal");
+        wr_str(&w, "   press_pa |   temp |     alt_m |  alt_rel |  ground_pa |   dt |    count |  stale |  lost | err | cal");
         break;
     case DBG_MODE_FLOWCAL:
         wr_str(&w, "     sum_x      sum_y |   fx   fy | qual | range_m | rad_per_count hien tai");
@@ -689,7 +702,13 @@ static void emit_header(void)
         wr_str(&w, "che do       |  health     err  armblk |     imu_n  dt_us   ierr |   loop   lmax   slow |    rhz   rsk |      imu2 |     up   drop");
         break;
     case DBG_MODE_MAG:
+#if MAG_SOURCE == MAG_SOURCE_SHUB
         wr_str(&w, "     mx     my     mz |    Btot |  raw_x  raw_y  raw_z |    hz |     count |  err  nack  busy | tt");
+#elif MAG_SOURCE == MAG_SOURCE_I2C
+        wr_str(&w, "     mx     my     mz |    Btot |  raw_x  raw_y  raw_z | dt_ms |     count |  err  lost stale | tt");
+#else
+        wr_str(&w, "     mx     my     mz |    Btot |  raw_x  raw_y  raw_z | (MAG_SOURCE = NONE, khong co du lieu) | tt");
+#endif
         break;
     case DBG_MODE_LOG:
         wr_str(&w, " ban ghi |  suc chua |  bo | file |  xa | loi | trang thai");
@@ -913,6 +932,9 @@ static void emit_baro(void)
     wr_i32(&w, (int32_t)b->sample_count, 9);
     wr_str(&w, " |");
     wr_i32(&w, (int32_t)bmp388_stale_reads(), 7);
+    wr_str(&w, " |");
+    /* Nhuong bus cho tu ke - KHONG phai loi, xem bmp388.c start_read(). */
+    wr_i32(&w, (int32_t)bmp388_bus_lost(), 6);
     wr_str(&w, " |");
     wr_i32(&w, (int32_t)b->error_count, 4);
     wr_str(&w, " |");
@@ -1762,7 +1784,6 @@ static void emit_magcal(void)
         {
             const double d[MAGCAL_N] = {
                 v[0]*v[0], v[1]*v[1], v[2]*v[2],
-                2.0*v[0]*v[1], 2.0*v[0]*v[2], 2.0*v[1]*v[2],
                 2.0*v[0], 2.0*v[1], 2.0*v[2]
             };
 
@@ -1938,19 +1959,36 @@ static void emit_log(void)
 }
 
 /**
- * QMC6309 doc gian tiep qua sensor hub cua LSM6DSV. Cong cu GIAI DOAN 3.
+ * Từ kế — nguồn SHUB (QMC6309 qua sensor hub LSM6DSV) hoặc I2C (module rời
+ * trên I2C1, xem mag_i2c.c). Cột chung cho cả hai nguồn:
  *
- * CACH DOC:
  *   mx/my/mz  tu truong theo he truc THAN, don vi Gauss, da tru hieu chuan
  *   Btot      DO LON vector tu truong. Day la cot quan trong nhat:
  *             XOAY may bay theo MOI HUONG ma Btot gan nhu khong doi -> tot.
- *             Btot doi nhieu -> chua hieu chuan (giai doan 4) hoac doc sai byte.
+ *             Btot doi nhieu -> chua hieu chuan hoac doc sai byte.
  *             Tu truong Trai Dat khoang 0,25 - 0,65 G tuy vi tri dia ly.
  *   raw       so tho 16 bit, he truc CAM BIEN, dung de xac dinh chieu truc
+ *
+ * Cột riêng nguồn SHUB:
  *   hz        nhip cap nhat thuc te, phai bam MAG_UPDATE_RATE_HZ
  *   nack      QMC6309 khong tra loi tren bus I2C phu. PHAI dung yen o 0.
  *   busy      so lan bo mot luot doc vi khong gianh duoc bus SPI3 voi DMA
  *             cua IMU. Vai lan la binh thuong, tang lien tuc thi co van de.
+ *
+ * Cột riêng nguồn I2C:
+ *   dt_ms     TUOI cua mau moi nhat luc in dong nay, khong phai chu ky giua
+ *             hai mau. Nen no chay trong khoang 0..1000/MAG_I2C_UPDATE_RATE_HZ
+ *             tuy pha giua nhip in va nhip doc. Dung de phat hien cam bien
+ *             CHET (so leo len roi dung o tren MAG_TIMEOUT_MS), chu khong
+ *             dung do tan so - muon do tan so thi xem cot count tang bao
+ *             nhieu trong mot khoang thoi gian.
+ *   lost      so lan GOI doc gap bus I2C1 dang ban vi BMP388 truyen. KHONG
+ *             phai so mau bi mat: gap bus ban thi driver thu lai ngay o vong
+ *             lap ke tiep, nen mot mau co the ton nhieu lan thu (do duoc
+ *             ~9 lan/mau, tuc ~450/giay o nhip 50 Hz). Muon biet co mat mau
+ *             that khong thi xem cot count co tang du nhip khong.
+ *   stale     so lan doc lai dung mau cu (bit RDY/DRDY chua len) vi hoi vong
+ *             nhanh hon ODR cua chip.
  */
 static void emit_mag(void)
 {
@@ -1969,6 +2007,8 @@ static void emit_mag(void)
     wr_i32(&w, m->raw.y, 7);
     wr_i32(&w, m->raw.z, 7);
     wr_str(&w, " |");
+
+#if MAG_SOURCE == MAG_SOURCE_SHUB
     wr_i32(&w, (int32_t)lsm6dsv_mag_rate_hz(), 6);
     wr_str(&w, " |");
     wr_i32(&w, (int32_t)m->sample_count, 10);
@@ -1996,6 +2036,35 @@ static void emit_mag(void)
     } else {
         wr_str(&w, "OK");
     }
+#elif MAG_SOURCE == MAG_SOURCE_I2C
+    wr_i32(&w, (int32_t)(fc_elapsed_us(micros(), m->timestamp_us) / 1000u), 6);
+    wr_str(&w, " |");
+    wr_i32(&w, (int32_t)m->sample_count, 10);
+    wr_str(&w, " |");
+    wr_i32(&w, (int32_t)m->error_count, 5);
+    wr_i32(&w, (int32_t)mag_i2c_bus_lost(), 6);
+    wr_i32(&w, (int32_t)mag_i2c_stale_reads(), 6);
+    wr_str(&w, " | ");
+
+    if (m->chip_id == 0u) {
+        wr_str(&w, mag_i2c_variant_name());
+    } else if (m->overflow) {
+        wr_str(&w, "TRAN DAI DO - dua mag_range_g len 8");
+    } else if (!m->healthy) {
+        wr_str(&w, "chua co du lieu");
+    } else if (!m->calibrated) {
+        wr_str(&w, mag_i2c_variant_name());
+        wr_str(&w, " - CHUA HIEU CHUAN (xem GD4 trong KE_HOACH_LA_BAN_I2C.md)");
+    } else {
+        wr_str(&w, mag_i2c_variant_name());
+        wr_str(&w, " OK");
+    }
+#else
+    wr_i32(&w, (int32_t)m->sample_count, 10);
+    wr_str(&w, " |");
+    wr_i32(&w, (int32_t)m->error_count, 5);
+    wr_str(&w, " | MAG_SOURCE = NONE, khong co du lieu");
+#endif
 
     wr_eol(&w);
     (void)tx_push(line, w.len);

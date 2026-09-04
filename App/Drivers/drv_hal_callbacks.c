@@ -36,6 +36,9 @@
 #include "dshot.h"
 #include "tlm_port.h"
 #include "dbg_console.h"
+#if MAG_SOURCE == MAG_SOURCE_I2C
+#include "mag_i2c.h"
+#endif
 
 /* ==========================================================================
  * GPIO — ngắt ngoài
@@ -115,19 +118,41 @@ void HAL_TIM_ErrorCallback(TIM_HandleTypeDef *htim)
  * Callback của HAL_I2C_Mem_Read_IT — đúng hàm này chứ không phải
  * HAL_I2C_MasterRxCpltCallback, vì lượt truyền có pha ghi địa chỉ thanh ghi
  * rồi mới lặp lại START để đọc.
+ *
+ * I2C1 mang HAI thiết bị khi MAG_SOURCE_I2C: BMP388 và từ kế rời, dùng
+ * chung bus. HAL_I2C_Mem_Read_IT() lưu hi2c->Devaddress ngay lúc phát lệnh
+ * và không xoá cho tới lượt kế tiếp, nên phân biệt đúng thiết bị nào vừa
+ * đọc xong mà không cần module trọng tài — xem
+ * App/Docs/KE_HOACH_LA_BAN_I2C.md mục "Việc thật sự khó". Nhánh else chỉ có
+ * thể là từ kế: không thiết bị I2C1 thứ ba nào phát lệnh đọc trong project.
  */
+#define I2C1_BARO_HAL_ADDR ((uint16_t)(BARO_I2C_ADDR_7BIT << 1))
+
 void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c)
 {
-    /* I2C1 — BMP388. Chưa có thiết bị I2C nào khác trên bus này. */
     if (hi2c->Instance == I2C1) {
-        bmp388_i2c_complete_isr();
+        if (hi2c->Devaddress == I2C1_BARO_HAL_ADDR) {
+            bmp388_i2c_complete_isr();
+        }
+#if MAG_SOURCE == MAG_SOURCE_I2C
+        else {
+            mag_i2c_complete_isr();
+        }
+#endif
     }
 }
 
 void HAL_I2C_ErrorCallback(I2C_HandleTypeDef *hi2c)
 {
     if (hi2c->Instance == I2C1) {
-        bmp388_i2c_error_isr();
+        if (hi2c->Devaddress == I2C1_BARO_HAL_ADDR) {
+            bmp388_i2c_error_isr();
+        }
+#if MAG_SOURCE == MAG_SOURCE_I2C
+        else {
+            mag_i2c_error_isr();
+        }
+#endif
     }
 }
 

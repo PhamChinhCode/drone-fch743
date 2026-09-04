@@ -288,7 +288,7 @@ P(imu2_axis_sign_y,      int8_t,  PT_I8, PARAM_FLAG_DANGER, -1.0f, 1.0f, IMU2_AX
 P(imu2_axis_sign_z,      int8_t,  PT_I8, PARAM_FLAG_DANGER, -1.0f, 1.0f, IMU2_AXIS_SIGN_Z)
 
 P(mag_source,            uint8_t, PT_U8, PARAM_FLAG_REBOOT, 0.0f, 2.0f,  MAG_SOURCE)
-P(mag_range_g,           uint8_t, PT_U8, PARAM_FLAG_REBOOT, 8.0f, 32.0f, MAG_RANGE_G)
+P(mag_range_g,           uint8_t, PT_U8, PARAM_FLAG_REBOOT, 1.0f, 32.0f, MAG_RANGE_G)
 P(mag_shub_odr,          uint8_t, PT_U8, PARAM_FLAG_REBOOT, 0.0f, 7.0f,  MAG_SHUB_ODR)
 P(mag_osr1,              uint8_t, PT_U8, PARAM_FLAG_REBOOT, 1.0f, 8.0f,  MAG_OSR1)
 P(mag_osr2,              uint8_t, PT_U8, PARAM_FLAG_REBOOT, 1.0f, 16.0f, MAG_OSR2)

@@ -29,6 +29,9 @@
 #include "icm20602.h"
 #include "lsm6dsv.h"
 #include "bmp388.h"
+#if MAG_SOURCE == MAG_SOURCE_I2C
+#include "mag_i2c.h"
+#endif
 #include "mtf01p.h"
 #include "crsf.h"
 #include "dshot.h"
@@ -464,7 +467,7 @@ int main(void)
    * Dang dat EST de xem ket qua bo loc EKF. Doi sang DBG_MODE_MOTOR de xem
    * dau ra DShot, hoac DBG_MODE_ARM de xem may trang thai arm.
    */
-  dbg_console_set_mode(DBG_MODE_FLOW); /* kiem tra DBG_MODE_ALTHOLD */
+  dbg_console_set_mode(DBG_MODE_MAGCAL); /* kiem tra DBG_MODE_ALTHOLD */
 
   dbg_println("");
   dbg_println("=== FCH743_V1.0 khoi dong ===");
@@ -513,7 +516,11 @@ int main(void)
      */
     if (g_params.mag_source != MAG_SOURCE_SHUB)
     {
-      dbg_println("Tu ke: TAT bang mag_source = NONE.");
+      /*
+       * KHONG co nghia la "khong co tu ke" - chi la nguon SHUB khong duoc
+       * chon. Tu ke roi tren I2C1 (neu co) bao trang thai rieng o duoi.
+       */
+      dbg_println("Tu ke qua sensor hub: TAT (mag_source khac SHUB).");
     }
     else if (lsm6dsv_mag_init())
     {
@@ -555,6 +562,31 @@ int main(void)
   {
     dbg_println("BMP388: LOI - kiem tra dia chi 0x77, dien tro keo len PB7/PB8");
   }
+
+#if MAG_SOURCE == MAG_SOURCE_I2C
+  /*
+   * Tu ke roi tren I2C1, dung CHUNG bus voi BMP388 vua init xong o tren.
+   * Goi SAU bmp388_init() de bus con dang ranh (BMP388 chua phat luot doc
+   * dau tien). Driver tu do 0x1E (HMC5883L), 0x0D (QMC5883L), 0x2C (QMC5883P).
+   *
+   * Van kiem g_params.mag_source giong nhanh SHUB o tren, de tat duoc tu ke
+   * luc chay ma khong phai nap lai firmware.
+   */
+  if (g_params.mag_source != MAG_SOURCE_I2C)
+  {
+    dbg_println("Tu ke I2C: TAT bang tham so mag_source.");
+  }
+  else if (mag_i2c_init())
+  {
+    dbg_println(mag_i2c_variant_name());
+    dbg_println("  CHUA HIEU CHUAN - chay DBG_MODE_MAGCAL truoc khi dung cho giu huong.");
+  }
+  else
+  {
+    dbg_println("Tu ke I2C: LOI - khong ai tra loi o 0x1E, 0x0D lan 0x2C");
+    mag_i2c_scan_dump();
+  }
+#endif
 
   if (mtf01p_init())
   {
@@ -797,7 +829,10 @@ int main(void)
     mixer_update();              /* lenh dieu khien -> muc ga 4 motor        */
     dshot_update(micros());      /* phat khung DShot cho 4 ESC               */
     bmp388_update();             /* xu ly mau baro va phat lenh doc I2C ke tiep */
-    mtf01p_update();             /* rut byte tu dem DMA UART4 va phan tich */
+#if MAG_SOURCE == MAG_SOURCE_I2C
+    mag_i2c_update(micros()); /* dung chung I2C1 voi BMP388, tu gioi han theo MAG_I2C_UPDATE_RATE_HZ */
+#endif
+    mtf01p_update(); /* rut byte tu dem DMA UART4 va phan tich */
 #if IMU2_ENABLE
     lsm6dsv_diag_poll(); /* tu tat khi da co mau dau tien */
 #if MAG_SOURCE == MAG_SOURCE_SHUB

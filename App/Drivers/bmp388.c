@@ -149,6 +149,7 @@ static uint32_t s_last_poll_us;
 static uint32_t s_xfer_start_us;
 static uint32_t s_i2c_errors;
 static uint32_t s_stale_reads;
+static uint32_t s_bus_lost;               /* thua tranh chap bus voi tu ke  */
 static uint8_t  s_chip_id;
 
 static float s_alt_alpha;                 /* hệ số lọc độ cao             */
@@ -338,6 +339,7 @@ bool bmp388_init(void)
     s_last_poll_us = 0;
     s_i2c_errors   = 0;
     s_stale_reads  = 0;
+    s_bus_lost     = 0;
     s_chip_id      = 0;
     s_alt_rel_m    = 0.0f;
     s_alt_primed   = false;
@@ -559,7 +561,22 @@ static void start_read(void)
                             I2C_MEMADD_SIZE_8BIT, s_buf,
                             BMP388_BURST_LEN) != HAL_OK) {
         s_busy = false;
-        record_error();
+
+        /*
+         * KHONG phai loi that: I2C1 gio dung chung voi tu ke roi (xem
+         * mag_i2c.c), nen HAL tra HAL_BUSY khi luot doc cua tu ke dang
+         * chay - hoac khi co BUSY phan cung con bat du State da READY.
+         * Ca hai la tranh chap binh thuong, bo luot roi thu lai o lan hoi
+         * vong sau (10 ms nua) la xong.
+         *
+         * Truoc khi co tu ke thi bus nay chi co mot chu nen nhanh nay gan
+         * nhu khong bao gio chay, va goi record_error() o day khong sao.
+         * Bay gio thi co: nem vao record_error() se dat co toan cuc
+         * FC_ERR_BARO_I2C va ha g_fc.baro.healthy chi vi mot lan nhuong
+         * bus - bao dong gia, va co loi thi CHOT nen khong tu xoa.
+         * Dem rieng de van thay duoc muc tranh chap.
+         */
+        s_bus_lost++;
     }
 }
 
@@ -664,6 +681,7 @@ uint8_t bmp388_calibration_progress(void)
 uint8_t  bmp388_chip_id(void)     { return s_chip_id; }
 uint32_t bmp388_i2c_errors(void)  { return s_i2c_errors; }
 uint32_t bmp388_stale_reads(void) { return s_stale_reads; }
+uint32_t bmp388_bus_lost(void)    { return s_bus_lost; }
 
 /* ==========================================================================
  * Ngắt

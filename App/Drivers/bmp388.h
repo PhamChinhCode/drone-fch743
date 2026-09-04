@@ -139,6 +139,13 @@ uint8_t bmp388_chip_id(void);
 uint32_t bmp388_i2c_errors(void);
 uint32_t bmp388_stale_reads(void);
 
+/**
+ * Số lần bỏ lượt hỏi vòng vì từ kế đang giữ bus I2C1 dùng chung.
+ * KHÔNG phải lỗi — xem ghi chú trong start_read(). Vài lần là bình thường;
+ * tăng liên tục và nhanh thì hai driver đang hỏi vòng quá gần pha nhau.
+ */
+uint32_t bmp388_bus_lost(void);
+
 /* --- Hàm gọi từ ngắt, xem App/Drivers/drv_hal_callbacks.c --------------- */
 
 /** Gọi khi I2C1 đọc xong khối thanh ghi. */

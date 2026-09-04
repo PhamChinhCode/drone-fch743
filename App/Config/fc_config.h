@@ -731,19 +731,22 @@
  *   MAG_SOURCE_SHUB  QMC6309 sau sensor hub của LSM6DSV. ĐÃ HIỆN THỰC và đã
  *                    chạy được, nhưng phần cứng module hiện hỏng — xem
  *                    App/Docs/KE_HOACH_LSM6DSV.md mục sự cố phần cứng.
- *   MAG_SOURCE_I2C   module từ kế rời trên bus I2C riêng. CHƯA HIỆN THỰC.
- *                    Bo còn I2C2 chưa dùng (PB10/PB11) và nhãn PE15 = I2C2_INT.
+ *   MAG_SOURCE_I2C   module từ kế rời trên I2C1 — DÙNG CHUNG bus với BMP388
+ *                    (PB8 SCL, PB7 SDA), không cần dây hay I2C2 nào khác.
+ *                    Driver App/Drivers/mag_i2c.c dò cả HMC5883L (0x1E) và
+ *                    QMC5883L (0x0D) lúc khởi động. Xem
+ *                    App/Docs/KE_HOACH_LA_BAN_I2C.md.
  * -------------------------------------------------------------------------- */
 #define MAG_SOURCE_NONE 0
 #define MAG_SOURCE_SHUB 1
 #define MAG_SOURCE_I2C 2
 
 /*
- * Đang đặt NONE: QMC6309 trên module không còn trả lời (NACK vĩnh viễn, quét
- * 8 địa chỉ đều im). Giữ nguyên toàn bộ code hiệu chuẩn và đường xử lý để lắp
- * module rời vào sau — chỉ cần viết driver mới rồi đổi hằng số này.
+ * QMC6309 tren module SHUB cu khong con tra loi (NACK vinh vien). Da lap
+ * module tu ke roi tren I2C1 -> chuyen sang MAG_SOURCE_I2C. Code SHUB va
+ * toan bo hieu chuan cu van giu nguyen, chi khong con duoc goi toi.
  */
-#define MAG_SOURCE MAG_SOURCE_NONE
+#define MAG_SOURCE MAG_SOURCE_I2C
 
 /* --------------------------------------------------------------------------
  * QMC6309 — từ kế, nối vào SENSOR HUB (bus I2C phụ) của LSM6DSV
@@ -810,48 +813,105 @@
 /*
  * Xoay trục từ kế sang trục thân. Ý nghĩa giống IMU_AXIS_* và IMU2_AXIS_*.
  *
- * ⚠️ CHƯA ĐO. QMC6309 nằm cùng module với LSM6DSV nhưng là chip RIÊNG, hướng
- * đặt trên đế của nó không nhất thiết trùng với LSM6DSV. Phải xác định ở
- * GIAI ĐOẠN 4 rồi mới tin được hướng mũi.
+ * ĐÃ ĐO 2026-09-04 trên QMC5883P, máy bay lắp hoàn chỉnh. Cách đo: đặt máy
+ * bay NẰM NGANG, mũi chỉ BẮC, rồi xoay chậm trọn một vòng 360° quanh trục
+ * đứng và quay lại hướng bắc.
+ *
+ * Kết quả: từ kế lắp XOAY 180° QUANH TRỤC ĐỨNG so với thân —
+ *   thân X (mũi trước)   = -cảm biến X    tức cảm biến X chỉ về phía SAU
+ *   thân Y (cánh phải)   = -cảm biến Y    tức cảm biến Y chỉ sang TRÁI
+ *   thân Z (hướng xuống) = +cảm biến Z    trùng chiều
+ *
+ * BA PHÉP KIỂM ĐỘC LẬP ĐỀU ĐẠT:
+ *   - Xoay ngang 360°: chỉ cảm biến Z đứng yên (biên độ 0,09 G so với
+ *     ~1,04 G của hai trục kia) -> nó là trục thẳng đứng.
+ *   - Lúc mũi chỉ bắc, cảm biến Y đọc +0,007 G, tức bằng 0 — đúng điều kiện
+ *     mà thành phần ngang phải thoả khi mũi trùng hướng bắc từ.
+ *   - Sau khi nạp ma trận: mx=+0,503  my=-0,006  mz=+0,327, hướng mũi tính
+ *     lại được 0,8° trong khi máy bay đang chỉ đúng bắc.
+ *
+ * Độ chúc từ đo được 32,5°, hợp với vĩ độ Bắc Việt Nam — một mốc vật lý độc
+ * lập nữa cho thấy phép tách thành phần ngang/đứng là đúng.
+ *
+ * DẤU CỦA TRỤC Z không đo trực tiếp mà SUY RA từ điều kiện định thức +1.
+ * Hai dấu kia xác định bằng thực nghiệm (X mang thành phần ngang lúc chỉ
+ * bắc, Z mang thành phần thẳng đứng), nên dấu còn lại là hệ quả bắt buộc
+ * của tính thuận tay phải chứ không phải phỏng đoán.
  *
  * Bộ ba dấu phải cho định thức +1 — xem ghi chú dài ở khối IMU2 phía trên.
+ * Ở đây: hoán vị (0,1,2) là chẵn, tích ba dấu (-1)(-1)(+1) = +1. Hợp lệ.
  */
 #define MAG_AXIS_MAP_X 0
 #define MAG_AXIS_MAP_Y 1
 #define MAG_AXIS_MAP_Z 2
-#define MAG_AXIS_SIGN_X (+1)
-#define MAG_AXIS_SIGN_Y (+1)
+#define MAG_AXIS_SIGN_X (-1)
+#define MAG_AXIS_SIGN_Y (-1)
 #define MAG_AXIS_SIGN_Z (+1)
 
 /*
  * Hiệu chuẩn sắt cứng và sắt mềm — tính trong HỆ CẢM BIẾN, áp TRƯỚC khi xoay
  * trục. Nhờ vậy sửa MAG_AXIS_* về sau không làm hỏng bộ số này.
  *
- * ĐÃ ĐO 2026-08-26, khớp ellipsoid bình phương tối thiểu trên 1176 mẫu.
+ * ĐO 2026-09-04 trên QMC5883P, MÁY BAY ĐÃ LẮP HOÀN CHỈNH (pin gắn đúng chỗ,
+ * dây nguồn đi đúng đường, động cơ đã bắt, cánh tháo ra, động cơ không quay).
+ * Dùng magcal_fit() bản 6 tham số trục-thẳng.
  *
- *   |B| sau hiệu chuẩn  0,386 G   -> đúng dải Trái Đất 0,25-0,65 G
- *   dao động |B| khi xoay mọi hướng: 1,7%  (mục tiêu dưới 5%)
+ * Ba hệ số tỉ lệ đều nằm trong 2,6% quanh 1,0 — từ kế gần như KHÔNG có méo
+ * sắt mềm, toàn bộ sai lệch đến từ TÂM (sắt cứng). Đúng như kỳ vọng vật lý.
  *
- * Ba hệ số tỉ lệ đều ~1,00 nghĩa là từ kế này gần như KHÔNG có méo sắt mềm.
- * Toàn bộ sai lệch đến từ TÂM, tức lệch sắt cứng.
+ * |offset| = 0,205 G, tức khoảng 47% độ lớn từ trường Trái Đất. Lớn nhưng
+ * bình thường với FC đặt gần động cơ. Không sao chừng nào nó CỐ ĐỊNH — nhưng
+ * dời module, đổi cách bắt bo, hay đi lại dây nguồn thì PHẢI hiệu chuẩn lại.
  *
- * Offset trục Y bằng 0,267 G, tức 69% độ lớn từ trường — lệch sắt cứng khá
- * lớn. Không sao chừng nào nó CỐ ĐỊNH, nhưng nếu dời module, đổi cách bắt bo
- * hay đi lại dây nguồn thì phải hiệu chuẩn lại.
+ * ⚠️ Sáu số này chỉ là mặc định lúc biên dịch. Tham số đã `save` trong flash
+ * sẽ GHI ĐÈ chúng lúc khởi động (main.c: param_load_defaults() rồi
+ * param_store_load()). Sửa ở đây thôi thì KHÔNG có tác dụng — phải
+ * `set mag_offset_x_g=...` rồi `save` trên console.
  *
  * Từ kế chưa hiệu chuẩn TỆ HƠN là không có: nó kéo yaw sai một cách tự tin,
- * và EKF sẽ tin nó. Không được bật hợp nhất yaw (giai đoạn 6) khi các số này
- * còn là mặc định.
+ * và EKF sẽ tin nó.
+ *
+ * CÁCH ĐO LẠI: xem GĐ4 trong App/Docs/KE_HOACH_LA_BAN_I2C.md.
+ *
+ * ---- Hai bộ số CŨ, giữ để tra cứu, ĐỪNG dùng lại ----
+ * 2026-08-26, chip QMC6309 trên module SHUB (đã hỏng, đã tháo):
+ *   OFFSET 0.0028 / 0.2674 / 0.0955   SCALE 1.0005 / 0.9977 / 1.0117
+ *
+ * 2026-09-03, QMC5883P nhưng đo với BO TRẦN TRÊN BÀN và bằng magcal_fit()
+ * bản 9 tham số CÒN LỖI (lấy đường chéo thay vì trị riêng):
+ *   OFFSET -0.0977 / 0.1361 / -0.0320  SCALE 0.9372 / 0.9975 / 1.0696
+ * Bộ đó cho |B| dao động 9,3%. Ba lần đo liên tiếp bằng thuật toán ấy còn
+ * lệch nhau tới 10% — dấu hiệu phép khớp suy biến, không phải vật lý.
  */
-#define MAG_OFFSET_X_G 0.0028f
-#define MAG_OFFSET_Y_G 0.2674f
-#define MAG_OFFSET_Z_G 0.0955f
-#define MAG_SCALE_X 1.0005f
-#define MAG_SCALE_Y 0.9977f
-#define MAG_SCALE_Z 1.0117f
+#define MAG_OFFSET_X_G 0.0404f
+#define MAG_OFFSET_Y_G 0.0763f
+#define MAG_OFFSET_Z_G -0.1861f
+#define MAG_SCALE_X 0.9863f
+#define MAG_SCALE_Y 0.9885f
+#define MAG_SCALE_Z 1.0257f
 
-/** Mất bao lâu không có mẫu mới thì coi từ kế là chết. */
+/** Mất bao lâu không có mẫu mới thì coi từ kế là chết. Dùng chung mọi nguồn. */
 #define MAG_TIMEOUT_MS 200
+
+/* --------------------------------------------------------------------------
+ * Từ kế rời trên I2C1 — App/Drivers/mag_i2c.c
+ *
+ * Dùng chung bus với BMP388 nên KHÔNG có hằng số địa chỉ/timing I2C riêng ở
+ * đây — hai địa chỉ dò (0x1E, 0x0D) nằm trong hmc5883.h/qmc5883.h, còn
+ * BARO_I2C_TIMEOUT_MS phía trên đã đúng cho cả bus. Dải đo dùng chung
+ * MAG_RANGE_G/mag_range_g với khối QMC6309 ở trên — driver tự làm tròn
+ * xuống mức chip mình hỗ trợ.
+ * -------------------------------------------------------------------------- */
+
+/** Timeout cho mỗi lượt Mem_Read/Write lúc init. Nhẹ hơn BARO vì ít byte hơn. */
+#define MAG_I2C_TIMEOUT_MS 20
+
+/*
+ * Nhịp vòng lặp chính đọc từ kế. Không bị ràng buộc chu kỳ sensor hub như
+ * SHUB nên có thể đặt cao hơn — cả hai chip đều ra mẫu ở tối thiểu 100 Hz,
+ * còn dư nhiều so với 50 Hz đọc ở đây.
+ */
+#define MAG_I2C_UPDATE_RATE_HZ 50
 
 /*
  * Bật bộ đo nền nhiễu gyro cho ICM20602 (xem App/Common/imu_noise.h).
