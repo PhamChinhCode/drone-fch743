@@ -34,21 +34,9 @@
 
 #include "fc_types.h"
 #include "fc_config.h"
+#include "log_record.h"
 
-/** Một bản ghi trong bộ đệm RAM. Đúng 48 byte, xem chú thích từng trường. */
-typedef struct __attribute__((packed)) {
-    uint32_t t_ms;        /**< mili giây kể từ lúc bắt đầu ghi        */
-    int16_t  gyro[3];     /**< tốc độ góc đã lọc, đơn vị 0,1 °/s      */
-    int16_t  accel[3];    /**< gia tốc, đơn vị mg                     */
-    int16_t  sp[3];       /**< mục tiêu tốc độ góc, đơn vị 0,1 °/s    */
-    int16_t  pid[3];      /**< đầu ra PID -1..1, nhân 10000           */
-    uint16_t motor[4];    /**< giá trị DShot thô 0..2047              */
-    int16_t  att[3];      /**< roll/pitch/yaw, đơn vị 0,01 rad        */
-    int16_t  alt_cm;      /**< độ cao ước lượng, cm                   */
-    uint16_t thr;         /**< lệnh ga 0..1, nhân 10000               */
-    uint8_t  mode;        /**< flight_mode_t                          */
-    uint8_t  flags;       /**< bit0 armed, bit1 mixer bão hoà         */
-} bb_record_t;
+/* bb_record_t va cach doi ra CSV nam o log_record.h - dung chung voi flashlog. */
 
 typedef enum {
     BB_STATE_OFF = 0,     /**< tắt bằng cấu hình, hoặc chưa mount được thẻ */

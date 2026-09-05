@@ -45,6 +45,8 @@
 #include "tlm_stream.h"
 #include "param_msg.h"
 #include "blackbox.h"
+#include "qspi_flash.h"
+#include "flashlog.h"
 #include "usb_msc.h"
 #include "param_table.h"
 #include "param_store.h"
@@ -360,6 +362,33 @@ int main(void)
                 (HAL_GPIO_ReadPin(BUTTON_K1_GPIO_Port, BUTTON_K1_Pin) == GPIO_PIN_RESET) ? 1 : 0);
   dbg_print_int("                   K2 (PC5) nhan?",
                 (HAL_GPIO_ReadPin(BUTTON_K2_GPIO_Port, BUTTON_K2_Pin) == GPIO_PIN_RESET) ? 1 : 0);
+
+  /*
+   * Flash NOR tren QUADSPI (U3, W25Q64). Moi tham do JEDEC ID - chua ghi
+   * chua doc gi.
+   *
+   * Dat o day vi no doc lap voi the SD va gan nhu khong ton thoi gian
+   * (duoi 1 ms). Ket qua in ra ngay de nhin mot cai la biet co chip hay
+   * khong, khong phai ngoi doan nhu hoi do the SD.
+   */
+#if QSPI_FLASH_ENABLE
+  if (qspi_flash_init())
+  {
+    dbg_print_hex("QSPI flash: JEDEC ID", qspi_flash_jedec(), 6);
+    dbg_print_int("            dung luong MB",
+                  (int32_t)(qspi_flash_bytes() / (1024u * 1024u)));
+    if (flashlog_init())
+    {
+      dbg_print_int("            log da dung, KB",
+                    (int32_t)(flashlog_used_bytes() / 1024u));
+      dbg_println(flashlog_state_name());
+    }
+  }
+  else
+  {
+    dbg_println("QSPI flash: KHONG THAY CHIP.");
+  }
+#endif
 
   /*
    * Blackbox. Mount the SD NGAY DAY, truoc moi driver cam bien.
@@ -840,6 +869,7 @@ int main(void)
 #endif
 #endif
     blackbox_update(micros()); /* ghi RAM khi ARM, xa the khi DISARM */
+    flashlog_update(micros()); /* ghi thang vao flash NOR, ke ca khi dang ARM */
     dbg_console_update(now_ms);
     cli_update(); /* dong lenh chinh tham so tren USART1 */
 

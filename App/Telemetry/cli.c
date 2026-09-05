@@ -10,6 +10,9 @@
 #include "tlm_port.h"
 #include "fc_state.h"
 #include "arming.h"
+#include "fc_time.h"
+#include "qspi_flash.h"
+#include "flashlog.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -398,6 +401,7 @@ static void cmd_help(void)
     cli_out("  mode [so]            doi che do in cua console, 0 = tat");
     cli_out("  yawzero              chot moc do troi yaw (xem o mode 16)");
     cli_out("  port [uart|usb|here]  doi duong telemetry; here = duong vua gui lenh");
+    cli_out("  flash [info|test|erase|dump|sim <n>]  log tren QSPI W25Q64");
 }
 
 static void cmd_version(void)
@@ -511,6 +515,282 @@ static bool cmd_set(char *args)
  * thi no thanh mot dong lenh - va quan trong hon: 'mode 0' tat han luong in
  * dinh ky, nen ket qua cua cac lenh khac khong bi cac dong log chen vao.
  */
+/* ==========================================================================
+ * Flash NOR trên QUADSPI
+ *
+ * Mọi thao tác ở đây đều CHẶN vòng lặp chính: xoá một sector tới 400 ms, xoá
+ * cả chip tới 100 giây. Nên tất cả đều chặn khi đang ARM — mất khung DShot
+ * lâu như vậy thì ESC coi như mất tín hiệu và cắt motor.
+ * ========================================================================== */
+
+/* ==========================================================================
+ * Trút log ra ngoài
+ *
+ * Đi theo đúng khuôn list_pump(): mỗi lần cli_update() gọi thì in tiếp vài
+ * dòng, và dừng lại ngay khi đầu ra hết chỗ. Nhờ vậy 8 MB log không chặn
+ * vòng lặp chính lấy một mili giây nào.
+ *
+ * Vì nó đi qua sink chứ không đi thẳng UART, lệnh "port usb" cho ta đường
+ * USB CDC nhanh gấp mười mà không phải viết thêm dòng nào.
+ * ========================================================================== */
+
+static bool     s_dump_on;
+static uint32_t s_dump_addr;
+static uint32_t s_dump_end;
+
+/** Chỗ phải chừa cho một dòng CSV. CLI_LINE_RESERVE 128 là không đủ. */
+#define DUMP_RESERVE  (LOG_RECORD_CSV_MAX + 32u)
+
+static void dump_stop(const char *why)
+{
+    s_dump_on = false;
+    cli_out(why);
+}
+
+static void dump_pump(void)
+{
+    char    line[LOG_RECORD_CSV_MAX];
+    uint8_t raw[LOG_RECORD_BYTES];
+
+    while (s_dump_on) {
+
+        if (s_sink->free_space() < DUMP_RESERVE) {
+            return;                     /* hết chỗ, in tiếp ở lần gọi sau */
+        }
+        if (s_dump_addr >= s_dump_end) {
+            dump_stop("# het");
+            return;
+        }
+        if (!qspi_flash_read(s_dump_addr, raw, sizeof(raw))) {
+            dump_stop("ERR: doc flash that bai");
+            return;
+        }
+
+        bool erased = true;
+
+        for (uint32_t i = 0; i < sizeof(raw); i++) {
+            if (raw[i] != 0xFFu) {
+                erased = false;
+                break;
+            }
+        }
+
+        if (erased) {
+            /*
+             * 0xFF là phần đệm cuối một chuyến bay. Nhảy tới ranh giới trang
+             * kế tiếp, chỗ chuyến sau bắt đầu. Nhưng nếu đang ĐỨNG ở đầu
+             * trang mà vẫn toàn 0xFF thì đây là vùng chưa ghi — hết dữ liệu.
+             */
+            if ((s_dump_addr % QSPI_FLASH_PAGE_BYTES) == 0u) {
+                dump_stop("# het");
+                return;
+            }
+            s_dump_addr = (s_dump_addr + QSPI_FLASH_PAGE_BYTES) &
+                          ~(QSPI_FLASH_PAGE_BYTES - 1u);
+            continue;
+        }
+
+        {
+            const flashlog_hdr_t *h = (const flashlog_hdr_t *)(const void *)raw;
+
+            if (h->magic == FLASHLOG_MAGIC) {
+                cli_out("#");
+                cli_out_int("# chuyen bay moi, moc boot_ms", (int32_t)h->boot_ms);
+                cli_out_int("#   nhip Hz", (int32_t)h->rate_hz);
+                s_dump_addr += LOG_RECORD_BYTES;
+                continue;
+            }
+        }
+
+        {
+            const int n = log_record_to_csv(line,
+                                            (const bb_record_t *)(const void *)raw);
+
+            /* Bỏ CR LF ở cuối: sink tự xuống dòng. */
+            line[n - 2] = 0;
+            cli_out(line);
+        }
+        s_dump_addr += LOG_RECORD_BYTES;
+    }
+}
+
+/** In dòng tiêu đề CSV, bỏ CR LF vì sink tự xuống dòng. */
+static void dump_header(void)
+{
+    char     h[160];
+    uint32_t i = 0;
+
+    while (g_log_csv_header[i] != 0 && i < (sizeof(h) - 1u)) {
+        h[i] = g_log_csv_header[i];
+        i++;
+    }
+    if (i >= 2u) {
+        i -= 2u;
+    }
+    h[i] = 0;
+    cli_out(h);
+}
+
+static void flash_selftest(void)
+{
+    /*
+     * Đệm để static chứ không trên ngăn xếp: 512 byte là nhiều so với khung
+     * ngăn xếp thông thường, mà ngăn xếp chính nằm ở DTCMRAM dùng chung.
+     */
+    static uint8_t wr[QSPI_FLASH_PAGE_BYTES];
+    static uint8_t rd[QSPI_FLASH_PAGE_BYTES];
+
+    /* Sector CUỐI chip: vùng log sau này mọc từ địa chỉ 0 lên, không đụng nhau. */
+    const uint32_t addr = qspi_flash_bytes() - QSPI_FLASH_SECTOR_BYTES;
+    uint32_t       t0;
+    uint32_t       t_erase, t_prog, t_read;
+
+    t0 = micros();
+    if (!qspi_flash_erase_sector(addr)) {
+        cli_out("ERR: xoa sector that bai");
+        return;
+    }
+    t_erase = fc_elapsed_us(micros(), t0);
+
+    if (!qspi_flash_read(addr, rd, sizeof(rd))) {
+        cli_out("ERR: doc sau khi xoa that bai");
+        return;
+    }
+    for (uint32_t i = 0; i < sizeof(rd); i++) {
+        if (rd[i] != 0xFFu) {
+            cli_out_int("ERR: sau khi xoa khong phai 0xFF tai byte", (int32_t)i);
+            return;
+        }
+    }
+
+    for (uint32_t i = 0; i < sizeof(wr); i++) {
+        wr[i] = (uint8_t)(i ^ 0x5Au);   /* mẫu không đối xứng, lệch một byte là lộ */
+    }
+
+    t0 = micros();
+    if (!qspi_flash_write_page(addr, wr, sizeof(wr))) {
+        cli_out("ERR: ghi trang that bai");
+        return;
+    }
+    t_prog = fc_elapsed_us(micros(), t0);
+
+    t0 = micros();
+    if (!qspi_flash_read(addr, rd, sizeof(rd))) {
+        cli_out("ERR: doc lai that bai");
+        return;
+    }
+    t_read = fc_elapsed_us(micros(), t0);
+
+    for (uint32_t i = 0; i < sizeof(rd); i++) {
+        if (rd[i] != wr[i]) {
+            cli_out_int("ERR: doc lai lech tai byte", (int32_t)i);
+            return;
+        }
+    }
+
+    cli_out("flash test: OK - xoa, ghi, doc lai deu khop");
+    cli_out_int("  xoa sector 4KB, us", (int32_t)t_erase);
+    cli_out_int("  ghi 256 byte,   us", (int32_t)t_prog);
+    cli_out_int("  doc 256 byte,   us", (int32_t)t_read);
+}
+
+static void cmd_flash(const char *args)
+{
+    if (qspi_flash_bytes() == 0u) {
+        cli_out("ERR: chua nhan ra chip flash QSPI");
+        return;
+    }
+
+    if (args == NULL || *args == '\0' || strcmp(args, "info") == 0) {
+        cli_out_hex("flash jedec", qspi_flash_jedec(), 6);
+        cli_out_int("flash dung luong MB",
+                    (int32_t)(qspi_flash_bytes() / (1024u * 1024u)));
+        cli_out_hex("flash sr1", qspi_flash_sr1(), 2);
+        cli_out_hex("flash sr2", qspi_flash_sr2(), 2);
+        cli_out(qspi_flash_is_busy() ? "flash: DANG BAN (xoa hoac ghi)"
+                                     : "flash: ranh");
+        cli_out_int("log da dung KB",
+                    (int32_t)(flashlog_used_bytes() / 1024u));
+        cli_out_int("log suc chua KB",
+                    (int32_t)(flashlog_capacity_bytes() / 1024u));
+        cli_out_int("log ban ghi chuyen nay", (int32_t)flashlog_records());
+        cli_out_int("log ban ghi bi bo", (int32_t)flashlog_dropped());
+        cli_out(flashlog_state_name());
+        return;
+    }
+
+    if (strcmp(args, "dump") == 0) {
+        s_dump_addr = 0;
+        s_dump_end  = flashlog_used_bytes();
+        if (s_dump_end == 0u) {
+            cli_out("# chua co log nao");
+            return;
+        }
+        s_dump_on = true;
+        dump_header();
+        dump_pump();
+        return;
+    }
+
+    if (g_fc.motor.armed) {
+        cli_out("ERR: dang ARM - thao tac flash chan vong lap toi 400 ms");
+        return;
+    }
+
+    if (strcmp(args, "test") == 0) {
+        flash_selftest();
+        return;
+    }
+
+    if (strncmp(args, "sim", 3) == 0) {
+        const long n = strtol(args + 3, NULL, 10);
+
+        if (n <= 0) {
+            cli_out("Dung: flash sim <so ban ghi>");
+            return;
+        }
+        cli_out_int("Dang ghi chuyen bay gia, so ban ghi", (int32_t)n);
+        if (flashlog_selftest((uint32_t)n)) {
+            cli_out("flash sim: OK");
+            cli_out_int("  log da dung KB",
+                        (int32_t)(flashlog_used_bytes() / 1024u));
+        } else {
+            cli_out("ERR: ghi that bai");
+            cli_out(flashlog_state_name());
+            cli_out_int("  ban ghi bi bo", (int32_t)flashlog_dropped());
+        }
+        return;
+    }
+
+    if (strcmp(args, "erase") == 0) {
+        if (!qspi_flash_erase_chip_start()) {
+            cli_out("ERR: khong phat duoc lenh xoa");
+            return;
+        }
+        cli_out("Da phat lenh xoa TOAN BO chip. Mat 20-100 giay.");
+        cli_out("Go 'flash info' de xem xong chua - khong can cho o day.");
+        cli_out("Xoa xong nho go 'flash rescan' de do lai diem cuoi.");
+        return;
+    }
+
+    if (strcmp(args, "rescan") == 0) {
+        /*
+         * Do lai diem cuoi cua du lieu tren chip. Can sau khi xoa, vi con tro
+         * ghi cua flashlog chi duoc do MOT LAN luc khoi dong.
+         */
+        if (qspi_flash_is_busy()) {
+            cli_out("ERR: chip con dang ban, doi xoa xong da");
+            return;
+        }
+        (void)flashlog_init();
+        cli_out_int("log da dung KB", (int32_t)(flashlog_used_bytes() / 1024u));
+        cli_out(flashlog_state_name());
+        return;
+    }
+
+    cli_out("Dung: flash [info|test|erase|rescan|dump|sim <n>]");
+}
+
 static void cmd_mode(const char *args)
 {
     if (args == NULL || *args == '\0') {
@@ -643,6 +923,7 @@ bool cli_execute_ex(const char *line, const cli_sink_t *sink)
     if (strcmp(p, "save") == 0)     { cmd_save();    return true; }
     if (strcmp(p, "mode") == 0)     { cmd_mode(args); return true; }
     if (strcmp(p, "port") == 0)     { cmd_port(args); return true; }
+    if (strcmp(p, "flash") == 0)    { cmd_flash(args); return true; }
 
     if (strcmp(p, "yawzero") == 0) {
         dbg_console_yaw_zero();
@@ -720,6 +1001,7 @@ void cli_update(void)
 {
     /* In tiếp phần dở TRƯỚC khi nhận lệnh mới: lệnh mới sẽ ghi đè trạng thái. */
     list_pump();
+    dump_pump();
 
     if (s_uart == NULL || s_uart->hdmarx == NULL) {
         return;
@@ -741,7 +1023,7 @@ void cli_update(void)
          * lấy vẫn nằm nguyên trong đệm DMA. Không có chốt này thì dán một
          * lúc mười dòng `dump` sẽ khiến mỗi dòng huỷ bản in của dòng trước.
          */
-        if (s_list_mode != LIST_NONE) {
+        if (s_list_mode != LIST_NONE || s_dump_on) {
             break;
         }
     }

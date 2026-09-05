@@ -1362,6 +1362,50 @@
  */
 #define BB_AUTOFORMAT 0
 
+/* ==========================================================================
+ * Flash NOR trên QUADSPI — W25Q64 (U3)
+ *
+ * Đường ghi log thứ hai, chạy song song với thẻ SD. Không có hệ tập tin nên
+ * mất điện giữa lúc ghi không làm hỏng gì ngoài 256 byte cuối — chính là
+ * điểm yếu mà thẻ SD không chữa được. Xem App/Drivers/qspi_flash.h.
+ * ========================================================================== */
+#define QSPI_FLASH_ENABLE 1
+
+/*
+ * Clock nhân của QUADSPI là D1HCLK = 240 MHz, tần số ra = 240/(prescaler+1).
+ *
+ * 3 cho ra 60 MHz. W25Q64 chịu tới 104 MHz nên còn nhiều dư địa, mà 60 MHz
+ * đã thừa xa nhu cầu: cả một trang 256 byte chỉ mất ~10 µs, trong khi mỗi
+ * trang cách nhau 53 ms ở nhịp log 100 Hz.
+ *
+ * MX_QUADSPI_Init() để 255, tức 0,94 MHz — đó chỉ là mặc định CubeMX điền
+ * vào chứ không phải lựa chọn có chủ ý, nên module tự đặt lại lúc khởi tạo.
+ */
+#define QSPI_FLASH_PRESCALER 3u
+
+/*
+ * Thời gian tối thiểu giữ NCS ở mức cao giữa hai lệnh. W25Q64 đòi 50 ns cho
+ * lệnh ghi; ở 60 MHz thì 2 chu kỳ chỉ được 33 ns — không đủ. 4 chu kỳ cho
+ * 67 ns, an toàn. Mặc định của CubeMX là 2 chu kỳ.
+ */
+#define QSPI_FLASH_CS_HIGH_TIME QSPI_CS_HIGH_TIME_4_CYCLE
+
+/*
+ * Ghi log thang vao flash NOR, NGAY TRONG LUC BAY.
+ *
+ * Khac blackbox tren the SD: khong phai dem ca chuyen bay trong RAM, nen
+ * khong con gioi han 55 giay. Xem App/Storage/flashlog.h.
+ */
+#define FLASHLOG_ENABLE 1
+
+/*
+ * Nhip ghi. Giu bang BB_RATE_HZ de hai duong log so duoc voi nhau.
+ *
+ * 8 MB / (48 byte * 100 Hz) = 29 phut. Nang len 500 Hz thi con 5,8 phut -
+ * dang gia neu dang chinh PID va can nhin dao dong tan so cao.
+ */
+#define FLASHLOG_RATE_HZ 100
+
 #define DBG_LINE_MAX 200          /* do dai toi da mot dong (STATUS dai nhat) */
 #define DBG_DEFAULT_RATE_HZ 20    /* 20 dòng/giây, mắt đọc kịp */
 #define DBG_HEADER_EVERY_LINES 20 /* in lại dòng tiêu đề     */
