@@ -885,7 +885,12 @@ bool cli_execute(const char *line)
 
 bool cli_output_pending(void)
 {
-    return s_list_mode != LIST_NONE;
+    /*
+     * Phai ke ca ban trut log. Thieu s_dump_on thi param_msg.c tuong lenh da
+     * xong ngay tu lo dong dau, dong phien lai, roi cac dong con lai van cu
+     * di ra - app thay mot bai trut bi cat cut ma khong hieu vi sao.
+     */
+    return (s_list_mode != LIST_NONE) || s_dump_on;
 }
 
 bool cli_execute_ex(const char *line, const cli_sink_t *sink)
