@@ -6,6 +6,7 @@
 #include "flashlog.h"
 #include "qspi_flash.h"
 #include "fc_state.h"
+#include "param_table.h"
 #include "fc_time.h"
 #include "main.h"
 
@@ -49,6 +50,7 @@ static uint32_t s_records;
 static uint32_t s_dropped;
 static uint32_t s_last_us;
 static uint32_t s_t0_us;
+static bool     s_switch_on;    /* trạng thái công tắc, đã có trễ */
 
 /* ==========================================================================
  * Dò điểm cuối của dữ liệu đã có
@@ -218,6 +220,54 @@ static void flush_tail(void)
 }
 
 /* ==========================================================================
+ * Công tắc bật/tắt ghi
+ *
+ * Đọc thẳng một kênh AUX của tay điều khiển, dùng lại đúng khuôn công tắc ARM
+ * trong arming.c: hai ngưỡng tạo trễ, ở khoảng giữa thì giữ nguyên trạng thái
+ * cũ. Không có trễ thì một cần gạt rung nhẹ quanh ngưỡng sẽ đóng mở file liên
+ * tục, mỗi lần đóng lại phí một trang flash cho phần đệm 0xFF.
+ *
+ * Công tắc điều khiển TRỰC TIẾP việc ghi, KHÔNG kèm điều kiện ARM. Cố ý như
+ * vậy: gạt công tắc mà không thấy ghi gì thì người dùng sẽ tưởng hỏng. Muốn
+ * ghi theo ARM như trước thì đặt log_switch_channel = -1.
+ * ========================================================================== */
+
+static bool log_requested(void)
+{
+    const int8_t ch = g_params.log_switch_channel;
+
+    if (ch < 0) {
+        /* Không dùng công tắc: giữ nguyên cách cũ. */
+        return g_fc.motor.armed && (g_fc.mode == FC_MODE_ARMED);
+    }
+    if ((uint8_t)ch >= RC_CHANNEL_COUNT) {
+        return false;
+    }
+
+    /*
+     * Chưa từng có khung RC nào thì channel_raw còn là 0, tức dưới ngưỡng tắt
+     * — nên trạng thái an toàn là KHÔNG ghi. Ngược lại, mất sóng giữa chừng
+     * thì giá trị kênh giữ nguyên và bản ghi vẫn chạy tiếp: đó đúng là lúc
+     * cần log nhất.
+     */
+    {
+        const uint16_t raw = g_fc.rc.channel_raw[ch];
+
+        if (raw >= g_params.log_switch_on_threshold) {
+            s_switch_on = true;
+        } else if (raw <= g_params.log_switch_off_threshold) {
+            s_switch_on = false;
+        }
+    }
+    return s_switch_on;
+}
+
+bool flashlog_switch_on(void)
+{
+    return s_switch_on;
+}
+
+/* ==========================================================================
  * Vòng đời
  * ========================================================================== */
 
@@ -229,6 +279,7 @@ bool flashlog_init(void)
     s_pending  = false;
     s_records  = 0;
     s_dropped  = 0;
+    s_switch_on = false;
 
     const uint32_t total = qspi_flash_bytes();
 
@@ -249,12 +300,12 @@ bool flashlog_init(void)
 
 void flashlog_update(uint32_t now_us)
 {
-    const bool armed = g_fc.motor.armed && (g_fc.mode == FC_MODE_ARMED);
+    const bool want = log_requested();
 
     switch (s_state) {
 
     case FL_STATE_READY:
-        if (armed) {
+        if (want) {
             flashlog_hdr_t hdr;
 
             memset(&hdr, 0, sizeof(hdr));
@@ -277,7 +328,7 @@ void flashlog_update(uint32_t now_us)
     case FL_STATE_RECORDING:
         pump();
 
-        if (!armed) {
+        if (!want) {
             flush_tail();
             if (s_state == FL_STATE_RECORDING) {
                 s_state = (s_write_addr < s_limit) ? FL_STATE_READY
@@ -362,7 +413,9 @@ const char *flashlog_state_name(void)
 {
     switch (s_state) {
     case FL_STATE_OFF:       return "TAT / khong thay chip";
-    case FL_STATE_READY:     return "san sang, cho arm";
+    case FL_STATE_READY:
+        return (g_params.log_switch_channel < 0) ? "san sang, cho arm"
+                                                 : "san sang, cho cong tac";
     case FL_STATE_RECORDING: return "DANG GHI vao flash";
     case FL_STATE_FULL:      return "DAY - can 'flash erase'";
     case FL_STATE_ERROR:     return "LOI CHIP";
@@ -380,6 +433,7 @@ uint32_t         flashlog_dropped(void)        { return 0; }
 uint32_t         flashlog_used_bytes(void)     { return 0; }
 uint32_t         flashlog_capacity_bytes(void) { return 0; }
 bool             flashlog_selftest(uint32_t n) { (void)n; return false; }
+bool             flashlog_switch_on(void)      { return false; }
 const char      *flashlog_state_name(void)     { return "TAT bang FLASHLOG_ENABLE = 0"; }
 
 #endif /* FLASHLOG_ENABLE */

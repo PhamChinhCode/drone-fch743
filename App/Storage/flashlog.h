@@ -105,4 +105,7 @@ uint32_t flashlog_dropped(void);
  */
 bool flashlog_selftest(uint32_t records);
 
+/** Trạng thái công tắc ghi log sau khi đã qua trễ hysteresis. */
+bool flashlog_switch_on(void);
+
 #endif /* FLASHLOG_H */

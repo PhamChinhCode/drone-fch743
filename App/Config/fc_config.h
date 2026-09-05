@@ -1260,7 +1260,15 @@
  * Telemetry
  * ========================================================================== */
 #define TLM_TX_BUFFER_SIZE 2048 /* ring buffer TX        */
-#define TLM_MAX_PAYLOAD 64
+
+/*
+ * Trần payload một khung.
+ *
+ * Đúng bằng sizeof(tlm_cli_line_t) — bản tin to nhất của giao thức, xem chú
+ * thích ở tlm_messages.h về việc `flash dump` cần dòng 241 ký tự. Byte LEN
+ * trong khung chỉ có một byte nên 255 là trần cứng, không nới thêm được.
+ */
+#define TLM_MAX_PAYLOAD 248
 #define TLM_DEFAULT_UART_BAUD 921600 /* USART1 -> máy tính    */
 
 /* ==========================================================================
@@ -1405,6 +1413,28 @@
  * dang gia neu dang chinh PID va can nhin dao dong tan so cao.
  */
 #define FLASHLOG_RATE_HZ 100
+
+/*
+ * Cong tac bat/tat ghi log, doc tu mot kenh AUX cua tay dieu khien.
+ *
+ * -1 = KHONG dung cong tac, quay ve cach cu: ghi khi ARM, dung khi DISARM.
+ *
+ * Mac dinh 6 = AUX3, vi AUX1 (kenh 4) da danh cho ARM va AUX2 (kenh 5) cho
+ * chuyen che do bay. Doi bang 'set log_switch_channel=<so>' luc chay.
+ *
+ * Cong tac dieu khien TRUC TIEP viec ghi, khong phu thuoc ARM. Nho vay thu
+ * cam bien tren ban cung ghi lai duoc, ma bay khong can log thi cung khong
+ * ton cho.
+ */
+#define LOG_SWITCH_CHANNEL 6
+
+/*
+ * Hai nguong tao tre hysteresis: o giua thi giu nguyen trang thai cu. Cong
+ * tac ba nac CRSF chi cho dung 172 / 992 / 1811, nen ca hai nguong deu nam
+ * gon giua nac giua va nac tren.
+ */
+#define LOG_SWITCH_ON_THRESHOLD 1500
+#define LOG_SWITCH_OFF_THRESHOLD 1300
 
 #define DBG_LINE_MAX 200          /* do dai toi da mot dong (STATUS dai nhat) */
 #define DBG_DEFAULT_RATE_HZ 20    /* 20 dòng/giây, mắt đọc kịp */

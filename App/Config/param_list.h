@@ -227,6 +227,8 @@ P(rc_mode_althold_threshold, uint16_t, PT_U16, 0, 172.0f, 2047.0f, RC_MODE_ALTHO
 P(arm_switch_on_threshold,   uint16_t, PT_U16, 0, 172.0f, 1811.0f, ARM_SWITCH_ON_THRESHOLD)
 P(arm_switch_off_threshold,  uint16_t, PT_U16, 0, 172.0f, 1811.0f, ARM_SWITCH_OFF_THRESHOLD)
 P(arm_hold_time_ms,          uint16_t, PT_U16, 0, 0.0f,   2000.0f, ARM_HOLD_TIME_MS)
+P(log_switch_on_threshold,  uint16_t, PT_U16, 0, 172.0f, 1811.0f, LOG_SWITCH_ON_THRESHOLD)
+P(log_switch_off_threshold, uint16_t, PT_U16, 0, 172.0f, 1811.0f, LOG_SWITCH_OFF_THRESHOLD)
 P(imu_gyro_fs_dps,           uint16_t, PT_U16, PARAM_FLAG_REBOOT, 250.0f, 2000.0f, IMU_GYRO_FS_DPS)
 P(imu_calib_sample_count,    uint16_t, PT_U16, 0, 100.0f, 8000.0f, IMU_CALIB_SAMPLE_COUNT)
 P(imu2_odr_hz,               uint16_t, PT_U16, PARAM_FLAG_REBOOT, 120.0f, 1920.0f, IMU2_ODR_HZ)
@@ -272,6 +274,9 @@ P(arm_switch_channel,    uint8_t, PT_U8, PARAM_FLAG_DANGER, 0.0f, 15.0f, ARM_SWI
 
 /* -1 = luôn dùng ANGLE, nên phải là kiểu có dấu. */
 P(rc_mode_channel,       int8_t,  PT_I8, PARAM_FLAG_DANGER, -1.0f, 15.0f, RC_MODE_CHANNEL)
+
+/* -1 = khong dung cong tac, ghi log khi ARM nhu truoc. */
+P(log_switch_channel, int8_t, PT_I8, 0, -1.0f, 15.0f, LOG_SWITCH_CHANNEL)
 
 /* 0 = go ACRO khoi cong tac (mac dinh). Van giu ACRO lam che do du phong. */
 P(rc_mode_acro_enable,   uint8_t, PT_U8, PARAM_FLAG_DANGER, 0.0f, 1.0f, RC_MODE_ACRO_ENABLE)

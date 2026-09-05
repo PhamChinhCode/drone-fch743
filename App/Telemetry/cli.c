@@ -718,6 +718,22 @@ static void cmd_flash(const char *args)
         cli_out_int("log ban ghi chuyen nay", (int32_t)flashlog_records());
         cli_out_int("log ban ghi bi bo", (int32_t)flashlog_dropped());
         cli_out(flashlog_state_name());
+
+        {
+            const int8_t ch = g_params.log_switch_channel;
+
+            if (ch < 0) {
+                cli_out("cong tac log: KHONG dung, ghi theo ARM");
+            } else if ((uint8_t)ch >= RC_CHANNEL_COUNT) {
+                cli_out("cong tac log: SO KENH KHONG HOP LE");
+            } else {
+                cli_out_int("cong tac log, kenh", (int32_t)ch);
+                cli_out_int("  gia tri kenh doc duoc",
+                            (int32_t)g_fc.rc.channel_raw[ch]);
+                cli_out(flashlog_switch_on() ? "  cong tac dang BAT"
+                                             : "  cong tac dang tat");
+            }
+        }
         return;
     }
 
