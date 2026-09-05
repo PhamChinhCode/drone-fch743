@@ -56,7 +56,7 @@ typedef struct __attribute__((packed)) {
     uint16_t rate_hz;
     uint8_t  rec_bytes;
     uint8_t  version;
-    uint8_t  reserved[36];
+    uint8_t  reserved[52];
 } flashlog_hdr_t;
 
 _Static_assert(sizeof(flashlog_hdr_t) == LOG_RECORD_BYTES,

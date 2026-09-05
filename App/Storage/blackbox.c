@@ -48,7 +48,7 @@ uint8_t BSP_SD_Init(void)
 FC_DMA_BUFFER static bb_record_t s_buf[BB_CAPACITY];
 
 /* Vùng dựng văn bản CSV trước khi đẩy xuống thẻ. Cũng phải DMA đọc được. */
-FC_DMA_BUFFER static char s_txt[BB_FLUSH_CHUNK_BYTES + 256u];
+FC_DMA_BUFFER static char s_txt[BB_FLUSH_CHUNK_BYTES + LOG_RECORD_CSV_MAX];
 
 /* ==========================================================================
  * Đối tượng FATFS của RIÊNG module này, KHÔNG dùng SDFatFS/SDFile của CubeMX

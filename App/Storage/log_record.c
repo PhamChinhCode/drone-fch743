@@ -5,6 +5,9 @@
 
 #include "log_record.h"
 #include "fc_state.h"
+#include "ctrl_poshold.h"
+
+#include <math.h>
 
 /* ==========================================================================
  * Định dạng số — tự viết thay vì dùng printf
@@ -73,7 +76,8 @@ static int wr_fixed(char *p, int32_t v, int dec)
 
 const char g_log_csv_header[] =
     "t_ms,gx,gy,gz,ax,ay,az,sp_x,sp_y,sp_z,pid_x,pid_y,pid_z,"
-    "m1,m2,m3,m4,roll,pitch,yaw,alt_m,thr,mode,armed,sat\r\n";
+    "m1,m2,m3,m4,roll,pitch,yaw,alt_m,thr,mode,armed,sat,"
+    "sp_roll,sp_pitch,v_fwd,v_right,vt_fwd,vt_right,range_m,flow_q,est_flags\r\n";
 
 int log_record_to_csv(char *out, const bb_record_t *r)
 {
@@ -91,6 +95,13 @@ int log_record_to_csv(char *out, const bb_record_t *r)
     out[n++] = ','; n += wr_int(&out[n], r->mode);
     out[n++] = ','; n += wr_int(&out[n], (r->flags & 0x01u) ? 1 : 0);
     out[n++] = ','; n += wr_int(&out[n], (r->flags & 0x02u) ? 1 : 0);
+
+    for (int i = 0; i < 2; i++) { out[n++] = ','; n += wr_fixed(&out[n], r->sp_angle[i], 2); }
+    for (int i = 0; i < 2; i++) { out[n++] = ','; n += wr_fixed(&out[n], r->vel_body[i], 2); }
+    for (int i = 0; i < 2; i++) { out[n++] = ','; n += wr_fixed(&out[n], r->vel_tgt[i], 2); }
+    out[n++] = ','; n += wr_fixed(&out[n], (int32_t)r->range_cm, 2);
+    out[n++] = ','; n += wr_int(&out[n], r->flow_q);
+    out[n++] = ','; n += wr_int(&out[n], r->est_flags);
     out[n++] = '\r';
     out[n++] = '\n';
 
@@ -141,4 +152,58 @@ void log_record_fill(bb_record_t *r, uint32_t t_ms)
     r->mode   = (uint8_t)g_fc.ctrl.mode;
     r->flags  = (uint8_t)((g_fc.motor.armed ? 0x01u : 0u) |
                           (g_fc.motor.saturated ? 0x02u : 0u));
+
+    /* ------------------------------------------------------------------
+     * Chẩn đoán giữ vị trí
+     * ------------------------------------------------------------------ */
+
+    /*
+     * Góc mà tầng trên RA LỆNH. Đây là ranh giới quan trọng nhất: so nó với
+     * att[] là biết vòng góc có thực hiện nổi lệnh không, mà so nó với
+     * vel_tgt[] là biết poshold có ra lệnh đúng không. Thiếu nó thì hai loại
+     * lỗi ấy nhìn giống hệt nhau.
+     */
+    r->sp_angle[0] = clamp16((int32_t)(g_fc.ctrl.setpoint_angle_rad.roll  * 100.0f));
+    r->sp_angle[1] = clamp16((int32_t)(g_fc.ctrl.setpoint_angle_rad.pitch * 100.0f));
+
+    /*
+     * Vận tốc thân tính LẠI từ ước lượng NED, chứ không lấy qua
+     * ctrl_poshold_velocity_body().
+     *
+     * Cùng công thức, cùng đầu vào, nên lúc poshold đang chạy thì hai bên ra
+     * đúng một số. Khác ở chỗ: ctrl_poshold về 0 khi poshold không chạy, còn
+     * cách này vẫn cho số thật — tức vẫn dùng được đúng vào lúc cần biết vì
+     * sao poshold từ chối vào.
+     */
+    {
+        const float yaw = g_fc.est.attitude_rad.yaw;
+        const float cy  = cosf(yaw);
+        const float sy  = sinf(yaw);
+        const float vn  = g_fc.est.velocity_mps.x;
+        const float ve  = g_fc.est.velocity_mps.y;
+
+        r->vel_body[0] = clamp16((int32_t)((  vn * cy + ve * sy) * 100.0f));
+        r->vel_body[1] = clamp16((int32_t)(( -vn * sy + ve * cy) * 100.0f));
+    }
+
+    /* Vận tốc poshold ĐANG ĐÒI. Bằng 0 khi poshold không chạy - đúng như vậy. */
+    {
+        const vec3f_t tgt = ctrl_poshold_target_body();
+
+        r->vel_tgt[0] = clamp16((int32_t)(tgt.x * 100.0f));
+        r->vel_tgt[1] = clamp16((int32_t)(tgt.y * 100.0f));
+    }
+
+    /* Hệ số quy đổi của optical flow tỉ lệ thuận với độ cao, nên range sai
+     * bao nhiêu phần trăm thì vận tốc sai bấy nhiêu. */
+    r->range_cm = (uint16_t)(g_fc.flow.range_mm / 10u);
+    r->flow_q   = g_fc.flow.flow_quality;
+
+    r->est_flags = (uint8_t)(
+        (g_fc.est.position_valid ? LOG_EST_POS_VALID   : 0u) |
+        (g_fc.est.altitude_valid ? LOG_EST_ALT_VALID   : 0u) |
+        (g_fc.est.attitude_valid ? LOG_EST_ATT_VALID   : 0u) |
+        (g_fc.flow.healthy       ? LOG_EST_FLOW_OK     : 0u) |
+        (g_fc.flow.range_valid   ? LOG_EST_RANGE_VALID : 0u) |
+        (ctrl_poshold_position_locked() ? LOG_EST_POS_LOCKED : 0u));
 }

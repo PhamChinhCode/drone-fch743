@@ -617,7 +617,9 @@ static void dump_pump(void)
 /** In dòng tiêu đề CSV, bỏ CR LF vì sink tự xuống dòng. */
 static void dump_header(void)
 {
-    char     h[160];
+    /* Kich co theo LOG_RECORD_CSV_MAX chu khong phai mot so cung: them cot
+       vao ban ghi la tieu de dai ra, ma cat cut thi khong ai nhan ra ngay. */
+    char     h[LOG_RECORD_CSV_MAX];
     uint32_t i = 0;
 
     while (g_log_csv_header[i] != 0 && i < (sizeof(h) - 1u)) {
