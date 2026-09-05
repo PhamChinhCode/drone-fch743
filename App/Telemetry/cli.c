@@ -401,7 +401,7 @@ static void cmd_help(void)
     cli_out("  mode [so]            doi che do in cua console, 0 = tat");
     cli_out("  yawzero              chot moc do troi yaw (xem o mode 16)");
     cli_out("  port [uart|usb|here]  doi duong telemetry; here = duong vua gui lenh");
-    cli_out("  flash [info|test|erase|dump|sim <n>]  log tren QSPI W25Q64");
+    cli_out("  flash [info|test|erase|rescan|dump|stop|sim <n>]  log tren QSPI W25Q64");
 }
 
 static void cmd_version(void)
@@ -734,6 +734,25 @@ static void cmd_flash(const char *args)
         return;
     }
 
+    if (strcmp(args, "stop") == 0) {
+        /*
+         * Bo ngang ban trut.
+         *
+         * Day khong phai tien nghi. Trut het 8 MB mat 4,5 phut, va mot lenh
+         * moi KHONG lam dung ban trut dang chay — no chi tron dong cua minh
+         * vao giua. Khong co lenh nay thi nut Huy ben app chi huy duoc phia
+         * app, con duong truyen ket them may phut nua.
+         *
+         * Dat TRUOC nhanh kiem ARM: dung lai thi khong chan vong lap.
+         */
+        if (s_dump_on) {
+            dump_stop("# bi dung giua chung");
+        } else {
+            cli_out("# khong co ban trut nao dang chay");
+        }
+        return;
+    }
+
     if (g_fc.motor.armed) {
         cli_out("ERR: dang ARM - thao tac flash chan vong lap toi 400 ms");
         return;
@@ -775,6 +794,41 @@ static void cmd_flash(const char *args)
         return;
     }
 
+    if (strncmp(args, "hex", 3) == 0) {
+        /*
+         * Doc tho mot ban ghi 64 byte tai dia chi cho truoc, in ra hex.
+         * Chan doan khi so trong CSV trong vo ly: no cho biet loi nam o du
+         * lieu tren chip hay o duong dich sang CSV.
+         */
+        static uint8_t raw[LOG_RECORD_BYTES];
+        static const char HEXD[] = "0123456789ABCDEF";
+        char     out[3u * LOG_RECORD_BYTES + 8u];
+        uint32_t addr = (uint32_t)strtoul(args + 3, NULL, 0);
+
+        addr &= ~(uint32_t)(LOG_RECORD_BYTES - 1u);   /* can theo ban ghi */
+
+        if (!qspi_flash_read(addr, raw, sizeof(raw))) {
+            cli_out("ERR: doc that bai");
+            return;
+        }
+        cli_out_int("hex tai dia chi", (int32_t)addr);
+
+        for (uint32_t r = 0; r < 4u; r++) {
+            uint32_t w = 0;
+
+            for (uint32_t i = 0; i < 16u; i++) {
+                const uint8_t v = raw[r * 16u + i];
+
+                out[w++] = HEXD[v >> 4];
+                out[w++] = HEXD[v & 0x0Fu];
+                out[w++] = ' ';
+            }
+            out[w] = 0;
+            cli_out(out);
+        }
+        return;
+    }
+
     if (strcmp(args, "rescan") == 0) {
         /*
          * Do lai diem cuoi cua du lieu tren chip. Can sau khi xoa, vi con tro
@@ -790,7 +844,7 @@ static void cmd_flash(const char *args)
         return;
     }
 
-    cli_out("Dung: flash [info|test|erase|rescan|dump|sim <n>]");
+    cli_out("Dung: flash [info|test|erase|rescan|dump|stop|sim <n>]");
 }
 
 static void cmd_mode(const char *args)
