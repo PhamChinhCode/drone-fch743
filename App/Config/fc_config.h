@@ -244,7 +244,7 @@
 #define RATE_PID_PITCH_KD 0.00000001f
 
 /* Trục yaw thường KHÔNG cần D: nó bị hãm sẵn bởi lực cản khí động của cánh. */
-#define RATE_PID_YAW_KP 0.0002f
+#define RATE_PID_YAW_KP 0.0006f
 /*
  * Trục YAW là trục CẦN KHÂU I NHẤT, và cũng là trục duy nhất không có gì tự
  * kéo về vị trí cũ.
@@ -262,7 +262,7 @@
  * Đặt bằng KP là điểm khởi đầu hợp lý. Còn trôi thì tăng dần; trôi rồi lắc
  * chậm biên độ lớn dần là dấu hiệu đã quá cao.
  */
-#define RATE_PID_YAW_KI 0.0015f
+#define RATE_PID_YAW_KI 0.0002f
 #define RATE_PID_YAW_KD 0.0f
 
 /*
@@ -320,7 +320,7 @@
  * Dai +-10 do la rong hon nhieu so voi moi sai so lap dat hop ly - lech qua
  * vai do thi phai ke lai bo mach chu khong bu bang phan mem.
  */
-#define ANGLE_TRIM_ROLL_DEG 1.0f
+#define ANGLE_TRIM_ROLL_DEG 0.6f
 #define ANGLE_TRIM_PITCH_DEG 0.0f
 
 #define ANGLE_MAX_RATE_DPS 200.0f
@@ -446,7 +446,7 @@
  * trên chính máy bay này: sai 10 % ở đây là tích phân phải bù 10 %, mất vài
  * giây, và trong vài giây đó máy bay lên hoặc xuống mất kiểm soát.
  */
-#define ALTHOLD_HOVER_THR 0.35f
+#define ALTHOLD_HOVER_THR 0.65f
 
 /* Điểm giữa của cần ga. Cần có lò xo về giữa thì để 0,5. */
 #define ALTHOLD_STICK_CENTRE 0.5f
@@ -461,7 +461,7 @@
 #define ALTHOLD_STICK_DEADBAND 0.10f
 
 /* Tốc độ lên/xuống tối đa khi đẩy cần hết hành trình. */
-#define ALTHOLD_MAX_CLIMB_MPS 2.0f
+#define ALTHOLD_MAX_CLIMB_MPS 3.0f
 
 /*
  * Vòng ngoài: sai số độ cao -> tốc độ lên mong muốn.
@@ -1087,7 +1087,7 @@
  * BẬT LẠI (đặt 1) khi đã lắp từ kế — lúc đó bias yaw mới quan sát được và
  * việc học nó trở thành có ích, vì nó sẽ bám theo trôi nhiệt thật.
  */
-#define EST_YAW_BIAS_LEARN 0
+#define EST_YAW_BIAS_LEARN 1
 
 /*
  * Accel chỉ đo đúng hướng trọng lực khi máy bay KHÔNG tăng tốc. Lệch khỏi
@@ -1185,11 +1185,35 @@
  * luôn là dòng điện qua dây nguồn khi lên ga. Hiệu chuẩn sắt cứng KHÔNG bù
  * được loại nhiễu đó vì nó thay đổi theo dòng.
  *
- * 0,30 = cho phép lệch 30%. Nới rộng thì nhiễu động cơ lọt vào; siết chặt quá
- * thì mọi mẫu đều bị loại và từ kế thành vô dụng. Xem cột `mrej` trong
- * DBG_MODE_MAG để biết đang loại bao nhiêu.
+ * ĐÃ ĐO 2026-09-04, bài thử đẩy ga hết cỡ rồi hạ liên tục, 820 mẫu:
+ *
+ *   |B| dao động 0,293 - 0,967 G quanh giá trị nghỉ 0,594 G, tức -51% đến
+ *   +63%. Từ trường Trái Đất là hằng số nên TOÀN BỘ dao động đó là nhiễu
+ *   dòng động cơ. Đây là mức nặng.
+ *
+ * Chính bộ số liệu đó xác nhận |B| là chỉ báo tin cậy tốt:
+ *
+ *   |B| lệch   0-5%  -> |sai số hướng| trung bình 1,3 độ, lớn nhất  7,9
+ *   |B| lệch  5-10%  ->                          1,7 độ, lớn nhất  6,7
+ *   |B| lệch 10-20%  ->                          6,3 độ, lớn nhất 111,2
+ *   |B| lệch 20-30%  ->                         14,9 độ, lớn nhất  98,1
+ *
+ * Dưới 10% thì sai số chỉ 1-2 độ; vượt 10% là nổ tung. Nên ngưỡng đặt 0,10.
+ *
+ * So sánh các mức trên cùng bộ dữ liệu (tỉ lệ loại / sai số còn lọt):
+ *   0,30 -> loại  6,5%, còn lọt sai số tới 18,0 độ   (quá rộng)
+ *   0,20 -> loại  9,5%, còn lọt tới 10,1 độ
+ *   0,10 -> loại 18,0%, còn lọt tới  7,9 độ          <- đang dùng
+ *   0,05 -> loại 41,7%, còn lọt tới  7,9 độ          (loại nhiều, không lợi thêm)
+ *
+ * Loại 18% ở nhịp 50 Hz vẫn còn ~41 Hz, thừa dùng cho la bàn.
+ *
+ * ⚠️ Siết cổng chỉ là CHỮA TRIỆU CHỨNG. Dao động ±60% là vấn đề CƠ KHÍ:
+ * xoắn đôi dây pin (dòng đi và về triệt tiêu từ trường của nhau) và dời từ
+ * kế xa dây nguồn. Khi ga lớn kéo dài, cổng sẽ loại gần hết mẫu và yaw quay
+ * về dựa hoàn toàn vào con quay.
  */
-#define EST_MAG_FIELD_TOL 0.30f
+#define EST_MAG_FIELD_TOL 0.10f
 
 /*
  * Cổng đổi mới, độ. Sau khi đã chốt hướng lần đầu, một phép đo lệch hơn ngần
@@ -1312,6 +1336,31 @@
  * nhật và người dùng thấy tiến độ.
  */
 #define BB_FLUSH_CHUNK_BYTES 4096u
+
+/*
+ * Số lần thử phục hồi thẻ lúc đang chạy, sau khi mount hoặc ghi thất bại.
+ *
+ * Mỗi lần thử gọi HAL_SD_DeInit/Init. Mà HAL_SD_Init với một cái thẻ hỏng
+ * nặng CÓ THỂ KHÔNG TRẢ VỀ — nó quay vòng trong SD_SendSDStatus, đúng lý do
+ * Error_Handler trong main.c phải có ngoại lệ riêng cho SDMMC. Vì vậy phải
+ * có trần: thử vài lần rồi thôi hẳn, và chỉ thử lúc đã DISARM.
+ *
+ * 0 = tắt phục hồi lúc chạy, hỏng là nghỉ tới lần khởi động sau.
+ */
+#define BB_RECOVER_RETRIES 3
+
+/* Giãn cách giữa hai lần thử phục hồi, micro giây. */
+#define BB_RECOVER_PERIOD_US 5000000UL
+
+/*
+ * Cho phép f_mkfs() format lại thẻ khi FAT hỏng tới mức không mount nổi
+ * (FR_NO_FILESYSTEM) — ca điển hình sau khi mất điện giữa lúc đang ghi.
+ *
+ * MẶC ĐỊNH TẮT, và nên để tắt: format XOÁ SẠCH thẻ, tức xoá luôn log của
+ * chính chuyến bay vừa gây sự cố — đúng cái bằng chứng cần nhất. Chỉ bật khi
+ * chấp nhận đánh đổi đó để máy bay luôn có chỗ ghi log.
+ */
+#define BB_AUTOFORMAT 0
 
 #define DBG_LINE_MAX 200          /* do dai toi da mot dong (STATUS dai nhat) */
 #define DBG_DEFAULT_RATE_HZ 20    /* 20 dòng/giây, mắt đọc kịp */

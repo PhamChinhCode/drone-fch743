@@ -467,7 +467,7 @@ int main(void)
    * Dang dat EST de xem ket qua bo loc EKF. Doi sang DBG_MODE_MOTOR de xem
    * dau ra DShot, hoac DBG_MODE_ARM de xem may trang thai arm.
    */
-  dbg_console_set_mode(DBG_MODE_MAGCAL); /* kiem tra DBG_MODE_ALTHOLD */
+  dbg_console_set_mode(DBG_MODE_LOG); /* kiem tra DBG_MODE_ALTHOLD */
 
   dbg_println("");
   dbg_println("=== FCH743_V1.0 khoi dong ===");
