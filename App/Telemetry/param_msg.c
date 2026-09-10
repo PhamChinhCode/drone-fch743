@@ -39,7 +39,7 @@ _Static_assert(PARAM_NAME_MAX == TLM_PARAM_NAME_MAX,
 _Static_assert(sizeof(tlm_param_value_t)   == 50u, "bo cuc PARAM_VALUE doi");
 _Static_assert(sizeof(tlm_ack_t)           ==  4u, "bo cuc ACK doi");
 _Static_assert(sizeof(tlm_fc_info_t)       == 32u, "bo cuc FC_INFO doi");
-_Static_assert(sizeof(tlm_cli_line_t)      == 63u, "bo cuc CLI_LINE doi");
+_Static_assert(sizeof(tlm_cli_line_t)      == 248u, "bo cuc CLI_LINE doi");
 _Static_assert(sizeof(tlm_cmd_param_set_t) ==  8u, "bo cuc CMD_PARAM_SET doi");
 _Static_assert(sizeof(tlm_cmd_param_read_t) == 2u, "bo cuc CMD_PARAM_READ doi");
 _Static_assert(sizeof(tlm_cmd_motor_test_t) == 4u, "bo cuc CMD_MOTOR_TEST doi");
@@ -178,7 +178,13 @@ static void cli_binary_write(const char *line)
 
     size_t n = strlen(line);
     if (n > sizeof(msg.text)) {
+        /*
+         * Cat cut PHAI lo ra. Bản giao thức 1 cắt im lặng ở 60 ký tự, và mọi
+         * dòng `flash dump` đều bị cắt — app nhận về CSV thiếu cột mà không
+         * có dấu hiệu nào. Một bit là đủ để chuyện đó không lặp lại.
+         */
         n = sizeof(msg.text);
+        msg.flags |= TLM_CLI_FLAG_TRUNC;
     }
     memcpy(msg.text, line, n);
 

@@ -193,7 +193,7 @@ typedef struct __attribute__((packed)) {
  * PC so nó ngay lúc bắt tay và TỪ CHỐI kết nối nếu lệch — thà không kết nối
  * còn hơn đọc sai offset rồi hiển thị số vô nghĩa một cách tự tin.
  * ========================================================================== */
-#define TLM_PROTOCOL_VERSION  1u
+#define TLM_PROTOCOL_VERSION  2u
 
 /**
  * Độ dài tên tham số trên đường truyền. PHẢI bằng PARAM_NAME_MAX trong
@@ -280,18 +280,32 @@ typedef struct __attribute__((packed)) {
 } tlm_fc_info_t;
 
 /** Bit trong tlm_cli_line_t.flags. */
-#define TLM_CLI_FLAG_LAST  (1u << 0)
+#define TLM_CLI_FLAG_LAST   (1u << 0)
+#define TLM_CLI_FLAG_TRUNC  (1u << 1)  /**< dòng dài hơn text[], đã bị cắt */
 
 /**
  * 0x10 — một dòng chữ trả lời lệnh CLI. Độ dài thay đổi.
  *
  * Cùng bộ mã sinh ra những dòng này với console chữ trên USART1, nên khi app
  * cư xử lạ thì gõ tay đúng lệnh đó vào PuTTY là biết lỗi ở firmware hay ở app.
+ *
+ * VÌ SAO text[] TO ĐẾN THẾ — và vì sao không to hơn được nữa:
+ *
+ *   `flash dump` in mỗi bản ghi log thành một dòng CSV 34 cột. Dòng dài nhất
+ *   log_record_to_csv() sinh được là 241 ký tự (mọi trường kịch biên int16).
+ *   Với text[60] của bản giao thức 1 thì dòng bị cắt ÂM THẦM — dữ liệu ra sai
+ *   mà không có dấu hiệu nào. Đó là lý do bản 2 tồn tại.
+ *
+ *   Trần cứng là 255: byte LEN trong khung chỉ có một byte (tlm_protocol.h).
+ *   Nên 245 là gần hết cỡ, và LOG_RECORD_CSV_MAX (320) KHÔNG chứa vừa. Thêm
+ *   cột vào bản ghi log tới mức vượt 245 thì phải đi đường khác, không nới
+ *   thêm được. TLM_CLI_FLAG_TRUNC có mặt để lúc đó app biết mà kêu, thay vì
+ *   lặp lại đúng lỗi âm thầm cũ.
  */
 typedef struct __attribute__((packed)) {
     uint16_t seq;           /**< số thứ tự dòng trong một lần trả lời */
     uint8_t  flags;         /**< TLM_CLI_FLAG_*                       */
-    char     text[60];      /**< không cần ký tự kết thúc chuỗi       */
+    char     text[245];     /**< không cần ký tự kết thúc chuỗi       */
 } tlm_cli_line_t;
 
 /* ==========================================================================

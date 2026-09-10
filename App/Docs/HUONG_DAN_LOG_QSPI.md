@@ -41,6 +41,7 @@ Gõ trên **USART1 / COM4, 921600 baud** (PuTTY, hoặc app của bạn — xem 
 | `flash erase` | Xoá **toàn bộ** chip | phát lệnh rồi trả về ngay; chip bận 20–100 s | **bị chặn** |
 | `flash rescan` | Dò lại điểm cuối dữ liệu | ~1,5 ms | **bị chặn** |
 | `flash test` | Tự kiểm phần cứng | tới 400 ms | **bị chặn** |
+| `flash stop` | Bỏ ngang bản trút đang chạy | không đáng kể | được |
 | `flash sim <n>` | Ghi một chuyến bay giả `n` bản ghi | vài giây | **bị chặn** |
 
 Mọi lệnh có thể chặn đều bị từ chối khi đang ARM — mất khung DShot lâu như
@@ -231,56 +232,102 @@ App đọc thô cũng nên làm y vậy thay vì đọc tuần tự cả 8 MB.
 
 ## 4. Tích hợp vào app cấu hình
 
-### Đường đang dùng được: CLI chữ trên USART1
+Có **hai** đường lấy log ra, cả hai đều dùng được. App cấu hình đi đường thứ
+hai; đường thứ nhất là để gõ tay trong PuTTY và để đối chiếu khi app cư xử lạ.
 
-App mở COM của USART1 ở 921600, gửi `flash dump\r\n`, đọc từng dòng cho tới
+### Đường 1: CLI chữ trên USART1
+
+Mở COM của USART1 ở 921600, gửi `flash dump\r\n`, đọc từng dòng cho tới
 `# het`. Đo được **85 KB/s**, tức bám sát trần lý thuyết 92 KB/s của
 921600 baud — nghẽn ở UART chứ không ở flash hay CPU.
 
-Suy ra thời gian: một dòng CSV đo được 153 byte lúc máy nằm yên, khoảng
-180 byte khi đang bay (số lớn hơn thì nhiều chữ số hơn).
+Một dòng CSV đo được 153 byte lúc máy nằm yên, khoảng 180 byte khi đang bay
+(số lớn hơn thì nhiều chữ số hơn).
 
-| Lượng log | Thời gian trút |
-|---|---|
-| 1 phút bay (6000 bản ghi) | ~10–13 giây |
-| 21,8 phút (đầy chip) | ~4–4,5 phút |
+### Đường 2: CLI nhị phân — app cấu hình đi đường này
 
-### ⚠️ Đường CHƯA dùng được: CLI nhị phân qua `TLM_MSG_CMD_CLI`
+Qua `TLM_MSG_CMD_CLI`, dùng được **từ giao thức 2**.
 
-App gửi lệnh CLI qua khung nhị phân thì mỗi dòng trả về nằm trong
-`tlm_cli_line_t`, mà trường `text` chỉ có **60 ký tự**
-([tlm_messages.h:294](../Telemetry/tlm_messages.h#L294)). Dòng CSV dài
-khoảng 180 ký tự nên **bị cắt cụt** — dữ liệu ra sai mà không có dấu hiệu
-báo lỗi nào.
+> Trước bản 2 thì đường này **cắt cụt mọi dòng CSV mà không báo gì**:
+> `tlm_cli_line_t.text` chỉ có 60 ký tự. App nhận về những dòng trông vẫn
+> đúng định dạng, chỉ là thiếu cột. Nếu bạn còn firmware giao thức 1 thì
+> đừng dùng đường này để trút log.
 
-`flash info`, `flash erase`, `flash rescan` thì dùng đường này bình thường,
-vì các dòng của chúng đều dưới 60 ký tự. **Chỉ `flash dump` là không.**
+Bản 2 đổi ba chỗ:
 
-Ba cách gỡ, xếp theo công sức:
+| | Giao thức 1 | Giao thức 2 |
+|---|---|---|
+| `tlm_cli_line_t.text` | 60 | **245** |
+| `TLM_MAX_PAYLOAD` | 64 | **248** |
+| Cắt cụt | im lặng | báo bằng cờ `TLM_CLI_FLAG_TRUNC` |
 
-1. **App mở thẳng cổng USART1 để trút**, dùng đường nhị phân cho mọi việc
-   khác. Không phải sửa firmware.
-2. **Nới `tlm_cli_line_t.text` lên 200 byte.** Đổi giao thức, phải sửa cả
-   hai đầu cùng lúc.
-3. **Thêm khung nhị phân đọc log thô** (ví dụ 4 bản ghi = 256 byte mỗi
-   khung). Tốt nhất cho app: không phải phân tích chữ, và ít hơn CSV khoảng
-   ba lần dữ liệu. Nhưng là một tính năng mới, chưa có.
+245 là gần hết cỡ chứ không phải chọn cho tròn: **byte `LEN` trong khung chỉ
+có một byte** ([tlm_protocol.h](../Telemetry/tlm_protocol.h)), nên payload
+không bao giờ vượt được 255. Dòng CSV dài nhất `log_record_to_csv()` sinh ra
+được là **241 ký tự** (mọi trường `int16` cùng kịch biên), nên 245 vừa đủ với
+một chút dư.
 
-Nếu app của bạn cần đường 2 hoặc 3 thì nói, tôi làm.
+Hệ quả cho ai định thêm cột vào bản ghi (mục 5): `LOG_RECORD_CSV_MAX` là 320,
+tức **lớn hơn sức chứa của khung**. Thêm cột tới mức dòng vượt 245 ký tự thì
+không nới thêm được nữa — phải đổi sang khung nhị phân đọc log thô. Lúc đó
+`TLM_CLI_FLAG_TRUNC` sẽ bật và app kêu, thay vì lặp lại đúng lỗi âm thầm cũ.
 
-### Gợi ý cho giao diện app
+Vì `tlm_cli_line_t` chỉ gửi đúng `3 + độ_dài_thật` byte nên dòng ngắn vẫn
+tốn đúng như trước; nới trần không làm chậm gì cả.
 
-Ba thứ nên bày ra trước, vì chúng trả lời được câu "log có dùng được không"
-mà không cần trút gì cả — tất cả đều lấy từ `flash info`:
+### Trút mất bao lâu
 
-- **`log da dung` / `log suc chua`** → thanh tiến độ, kèm quy đổi ra phút
+Đo thật ngày 2026-09-05, 300 bản ghi (19 KB log):
+
+| Đường | Tốc độ | 300 bản ghi | Suy ra cho 8 MB đầy chip |
+|---|---|---|---|
+| USART1, CLI chữ | 85 KB/s | 0,6 s | ~4–4,5 phút |
+| USB CDC, CLI nhị phân | **175 KB/s** | **0,28 s** | ~2 phút |
+
+Con số 175 KB/s vượt trần 92 KB/s của 921600 baud vì đường đó là **USB CDC**,
+không phải UART. Qua USART3 → ESP32 thì trần vẫn là 92 KB/s. Gõ `port` để
+biết mình đang ở đường nào; app tự gửi `port here` lúc bắt tay nên nó luôn
+kéo đường phát về đúng cổng nó đang mở.
+
+Phụ phí khung là 10 byte mỗi dòng (7 byte khung + 3 byte seq/flags) trên một
+dòng khoảng 165 byte, tức khoảng 6%.
+
+### `flash stop` — vì sao phải có
+
+Một lệnh mới **không** làm dừng bản trút đang chạy: `s_dump_on` vẫn bật và
+đầu ra của hai lệnh trộn vào nhau. Không có `flash stop` thì nút Huỷ bên app
+chỉ huỷ được phía app, còn đường truyền kẹt thêm tới bốn phút rưỡi nữa. App
+gửi lệnh này ngay sau khi người dùng bấm Huỷ.
+
+Lệnh này đặt **trước** nhánh kiểm ARM: dừng lại thì không chặn vòng lặp, nên
+không có lý do gì để từ chối nó khi đang bay.
+
+### Tab "Log bay" trong app cấu hình
+
+Đã hiện thực, xem
+[LogTabViewModel.cs](../../../../Configurator/src/FcConfigurator/ViewModels/LogTabViewModel.cs).
+Nó làm đúng ba việc mà `flash info` trả lời được mà không cần trút gì cả:
+
+- **Thanh tiến độ `log da dung` / `log suc chua`**, kèm quy đổi ra phút
   (`KB × 1024 ÷ 64 ÷ 100` giây).
-- **`log ban ghi bi bo`** → khác 0 là báo động, chip không theo kịp.
-- **Trạng thái** `DAY` → nhắc người dùng `flash erase`.
+- **`log ban ghi bi bo`** khác 0 thì hiện chữ đỏ — chip không theo kịp.
+- **Nút Xoá có hộp xác nhận**, mặc định là Huỷ, và nhắc phải `flash rescan`
+  sau đó.
 
-`flash erase` nên có hộp xác nhận: nó xoá sạch và **không hoàn tác được**.
+Phần đồ thị chia làm chín khung theo đơn vị (gyro °/s, góc rad, motor bậc
+DShot…) vì gộp chung một trục thì tất cả trừ một đường đều bẹp vào trục. Mọi
+khung **dùng chung một trục thời gian**: phóng to ở khung gyro thì khung
+motor phóng theo, nếu không thì đối chiếu `sp_roll` với `roll` là vô nghĩa.
 
----
+Cặp *đo được* / *mục tiêu* (`roll`/`sp_roll`, `v_fwd`/`vt_fwd`) vẽ **cùng
+màu, đường mục tiêu nét đứt**.
+
+Vẽ 131 nghìn mẫu không cần lấy mẫu thưa: mỗi cột điểm ảnh chỉ vẽ một đoạn
+min..max. Lấy mẫu thưa sẽ làm **mất đỉnh nhiễu** — đúng thứ người ta mở log
+ra để tìm.
+
+App còn nhận `--log <file.csv>` để mở thẳng một bản log đã lưu mà không cần
+cắm mạch bay.
 
 ## 5. Cấu hình lúc biên dịch
 
@@ -309,6 +356,9 @@ Rồi:
 - **Tăng `hdr.version`** trong [flashlog.c](../Storage/flashlog.c).
 - **`flash erase`** — log cũ khác kích thước sẽ đọc ra số vô nghĩa.
 - Kiểm `LOG_RECORD_CSV_MAX` còn đủ cho dòng CSV dài nhất.
+- **Kiểm dòng dài nhất còn dưới 245 ký tự** — sức chứa của
+  `tlm_cli_line_t.text`. Vượt qua đó thì app trút qua đường nhị phân sẽ nhận
+  cờ `TLM_CLI_FLAG_TRUNC` và từ chối dữ liệu; xem mục 4.
 
 ---
 
@@ -343,8 +393,25 @@ Trên phần cứng thật, ST-Link + COM4, ngày 2026-09-05:
 | `flash sim 300` | đúng 19 KB như tính trước, không bỏ bản ghi nào |
 | Ba lần khởi động lại | dò lại đúng 19 KB cả ba lần |
 | `flash dump` | 34 cột khớp giữa tiêu đề và dữ liệu |
-| Tốc độ trút | 85 KB/s |
+| Tốc độ trút, USART1 chữ | 85 KB/s |
+
+Thêm ngày 2026-09-05, sau khi nới giao thức lên bản 2:
+
+| Việc | Kết quả |
+|---|---|
+| `flash dump` qua đường **nhị phân** (USB CDC, COM17) | 300 bản ghi, 305 dòng, **34 cột đủ, không dòng nào bị cắt** |
+| Dòng CSV dài nhất đo được | 155 ký tự (trần lý thuyết 241, sức chứa 245) |
+| Tốc độ trút, nhị phân qua USB CDC | 0,28 s cho 49,8 KB → **175 KB/s** |
+| Đối chiếu bản trút chữ (COM4) với bản nhị phân | trùng nhau, cùng 300 bản ghi |
+| `flash stop` khi không có bản trút nào | trả về `# khong co ban trut nao dang chay` |
+| Tab Log bay dựng đủ 9 khung đồ thị, con trỏ đọc số, xuất CSV trùng từng dòng với bản gốc | đạt (`--selftest COM17`) |
 
 **Chưa kiểm:** ghi trong lúc ARM thật (cần RC), và blackbox trên thẻ SD sau
 khi tách `log_record.c` ra dùng chung — thẻ đang tắt bằng `FC_SD_ENABLE = 0`
 nên mới chỉ kiểm được ở mức biên dịch.
+
+Bên app cũng còn ba chỗ chưa kiểm bằng tay: **cuộn chuột để phóng to, kéo để
+dời, và nút Xoá**. Hai cái đầu chỉ kiểm được bằng cách ngồi trước màn hình mà
+rê chuột; cái thứ ba thì cố ý không tự động chạy — nó xoá sạch log không hoàn
+tác được. Bản trút đầy chip (4,5 phút, ~131 nghìn dòng) cũng chưa chạy thật:
+mọi số ở trên suy từ bản 300 bản ghi.
