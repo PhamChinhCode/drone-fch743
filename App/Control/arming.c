@@ -181,6 +181,26 @@ bool                  arming_switch_on(void)        { return s_switch_stable; }
 uint32_t              arming_arm_count(void)        { return s_arm_count; }
 uint32_t              arming_disarm_count(void)     { return s_disarm_count; }
 
+bool arming_request_disarm(void)
+{
+    /* Đã ở dưới đất rồi thì coi như xong, không đụng gì thêm. */
+    if (s_state != ARMING_ARMED && g_fc.mode != FC_MODE_ARMED) {
+        return true;
+    }
+
+    do_disarm(DISARM_CAUSE_LINK);
+
+    /*
+     * Về LOCKED chứ không phải SAFE. Công tắc lúc này gần như chắc chắn vẫn
+     * đang ON (người lái đâu có gạt gì); để ở SAFE thì vòng arming_update kế
+     * tiếp thấy "công tắc ON, đủ điều kiện" và arm lại ngay lập tức — lệnh
+     * cắt sẽ không có tác dụng gì ngoài một nhịp giật động cơ.
+     */
+    s_state = ARMING_LOCKED;
+
+    return (g_fc.mode != FC_MODE_ARMED);
+}
+
 /* ==========================================================================
  * Chuỗi mô tả
  * ========================================================================== */
@@ -203,6 +223,7 @@ const char *arming_cause_name(arming_disarm_cause_t cause)
     case DISARM_CAUSE_SWITCH:   return "CONG_TAC";
     case DISARM_CAUSE_FAILSAFE: return "MAT_SONG";
     case DISARM_CAUSE_BLOCKED:  return "CHUA_DU_DK";
+    case DISARM_CAUSE_LINK:     return "LENH_MAVLINK";
     default:                    return "?";
     }
 }

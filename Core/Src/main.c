@@ -43,6 +43,7 @@
 #include "dbg_console.h"
 #include "tlm_port.h"
 #include "tlm_stream.h"
+#include "mav_link.h"
 #include "param_msg.h"
 #include "blackbox.h"
 #include "qspi_flash.h"
@@ -700,6 +701,20 @@ int main(void)
   tlm_stream_apply_profile(TLM_PROFILE_FLIGHT);
   tlm_stream_send_text(0, "FCH743 telemetry san sang");
   dbg_println("Telemetry: USART3 @921600 -> ESP32 ESP-NOW, ho so FLIGHT.");
+
+  /*
+   * MAVLink ra may tinh nhung ROS2 tren UART8 (PE0/PE1) @921600.
+   *
+   * Duong nay DOC LAP voi telemetry USART3 o tren: khac day, khac giao thuc,
+   * khac muc dich. USART3 cho khung nhi phan rieng cua du an ve phan mem PC;
+   * UART8 cho MAVLink cho MAVROS.
+   *
+   * MUC 1 - chi giam sat va cat khan cap. May tinh nhung DOC duoc trang thai
+   * va RA LENH DISARM, nhung KHONG dieu khien duoc chuyen bay. Lenh ARM tu
+   * duong nay luon bi tu choi - xem ly do trong App/Mavlink/mav_link.c.
+   */
+  mav_init();
+  dbg_println("MAVLink: UART8 @921600 -> may tinh nhung ROS2 (muc 1).");
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -942,6 +957,15 @@ int main(void)
     tlm_stream_update(now_ms); /* quet bang luong, phat cai nao toi han      */
     param_msg_update(now_ms);  /* bom bang tham so va dau ra CLI con do      */
     tlm_port_flush();          /* danh thuc DMA neu no dang ranh             */
+
+    /*
+     * MAVLink tren UART8. Dat sau khoi telemetry cu vi cung mot ly do: moi
+     * gia tri trong g_fc phai da cap nhat xong trong nhip nay.
+     *
+     * Khong chan: chep byte vao ring buffer roi giao cho DMA, phan con lai
+     * chay trong ngat UART8.
+     */
+    mav_update(now_ms);
   }
   /* USER CODE END 3 */
 }

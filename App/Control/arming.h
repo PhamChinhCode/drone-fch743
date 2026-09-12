@@ -73,7 +73,8 @@ typedef enum {
     DISARM_CAUSE_BOOT,      /**< khoá sẵn từ lúc khởi động             */
     DISARM_CAUSE_SWITCH,    /**< người lái gạt công tắc về OFF         */
     DISARM_CAUSE_FAILSAFE,  /**< mất sóng khi đang bay                 */
-    DISARM_CAUSE_BLOCKED    /**< bật công tắc lúc chưa đủ điều kiện    */
+    DISARM_CAUSE_BLOCKED,   /**< bật công tắc lúc chưa đủ điều kiện    */
+    DISARM_CAUSE_LINK       /**< lệnh disarm từ đường MAVLink           */
 } arming_disarm_cause_t;
 
 /* ==========================================================================
@@ -89,6 +90,23 @@ void arming_init(void);
  * @param now_ms  mốc thời gian mili giây, lấy từ HAL_GetTick()
  */
 void arming_update(uint32_t now_ms);
+
+/**
+ * Ra lệnh disarm từ bên ngoài (hiện tại: MAV_CMD_COMPONENT_ARM_DISARM trên
+ * UART8). Đây là lối vào DUY NHẤT cho phép mã ngoài module này disarm.
+ *
+ * VÌ SAO KHÔNG GỌI THẲNG fc_state_set_mode(FC_MODE_DISARMED):
+ *   Gọi thẳng thì g_fc.mode về DISARMED nhưng s_state vẫn kẹt ở ARMING_ARMED.
+ *   Máy trạng thái và trạng thái thật lệch nhau, và nhánh "công tắc về OFF"
+ *   không còn chạy nữa — tức công tắc trên tay điều khiển mất tác dụng.
+ *
+ * SAU KHI GỌI, MÁY TRẠNG THÁI VỀ LOCKED: người lái phải gạt công tắc về OFF
+ * rồi bật lại mới bay tiếp được. Cố ý làm vậy — một lệnh cắt từ máy tính
+ * nhúng không được phép tự phục hồi khi công tắc vẫn đang ON.
+ *
+ *  true nếu sau lệnh này máy bay chắc chắn đã disarm.
+ */
+bool arming_request_disarm(void);
 
 arming_state_t        arming_get_state(void);
 arming_disarm_cause_t arming_last_disarm_cause(void);

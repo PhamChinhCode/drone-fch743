@@ -88,6 +88,8 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/App/Control
     ${CMAKE_CURRENT_SOURCE_DIR}/App/Telemetry
     ${CMAKE_CURRENT_SOURCE_DIR}/App/Storage
+    ${CMAKE_CURRENT_SOURCE_DIR}/App/Mavlink
+    ${CMAKE_CURRENT_SOURCE_DIR}/App/Mavlink/mavlink_lib
     ${USB_MSC_DIR}/Inc
 )
 

@@ -35,6 +35,7 @@
 #include "crsf.h"
 #include "dshot.h"
 #include "tlm_port.h"
+#include "mav_port.h"
 #include "dbg_console.h"
 #if MAG_SOURCE == MAG_SOURCE_I2C
 #include "mag_i2c.h"
@@ -176,6 +177,18 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
     if (huart->Instance == USART3) {
         tlm_port_tx_complete_isr();
     }
+
+    /*
+     * UART8 — MAVLink -> máy tính nhúng ROS2.
+     *
+     * TX DMA chạy chế độ Normal nên callback này tới từ NGẮT UART8 chứ không
+     * phải ngắt DMA (HAL bật cờ TCIE khi DMA xong). Không bật UART8 global
+     * interrupt trong CubeMX thì hàm này không bao giờ chạy, gState kẹt ở
+     * BUSY_TX, và đường gửi chết sau đúng một gói.
+     */
+    if (huart->Instance == UART8) {
+        mav_port_tx_complete_isr();
+    }
 }
 
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
@@ -203,5 +216,14 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
      */
     if (huart->Instance == USART3) {
         tlm_port_uart_error_isr();
+    }
+
+    /*
+     * UART8 — MAVLink. Cùng lý do như USART3: không khởi động lại RX DMA thì
+     * đường lệnh từ máy tính nhúng im vĩnh viễn. Hay gặp khi máy tính nhúng
+     * khởi động lại làm chân TX của nó thả nổi một nhịp.
+     */
+    if (huart->Instance == UART8) {
+        mav_port_error_isr();
     }
 }
