@@ -427,6 +427,97 @@
 #define POSHOLD_POS_KP 0.0f
 
 /* ==========================================================================
+ * OFFBOARD — nhan lenh van toc tu may tinh nhung qua MAVLink
+ *
+ * Hop dong: App/Docs/GIAO_UOC_FC_ROS2.md muc 6. Hien thuc: App/Control/ctrl_offboard.h.
+ *
+ * MAC DINH LA BAT, kenh 7 = ch8 tren tay cam (AUX4). Doi tu -1 sang 7 ngay
+ * 2026-09-13 theo yeu cau, sau khi da nghiem thu tren ban cac buoc T1/T2 cua
+ * che do Pi (xem App/Docs/GIAO_UOC_FC_ROS2.md muc 6.2).
+ *
+ * HE QUA CAN BIET: tu nay CH8 LUON CO HIEU LUC. Gat ch8 len la ch5 doi nghia
+ * tu "arm ngay" thanh "cho phep Pi arm". Muon tat han duong ra lenh tu may
+ * tinh nhung: `set offboard_switch_channel=-1` roi `save`.
+ *
+ * DOI GIA TRI MAC DINH NAY LA DOI table_crc (param_table.c bam ca def), nen
+ * bo tham so da luu trong flash se bi bo qua o lan khoi dong ke tiep. Chinh
+ * sua cua nguoi dung khong tu mat, nhung phai nap lai roi `save`.
+ * ========================================================================== */
+
+/* Kenh AUX cho phep OFFBOARD, DEM TU 0. -1 = tat han. 7 = ch8 tren tay cam.
+ * AUX1(4) da danh cho ARM, AUX2(5) cho chon che do, AUX3(6) cho ghi log,
+ * nen AUX4 = kenh 7 la cho trong tiep theo. */
+#define OFFBOARD_SWITCH_CHANNEL 7
+
+/* Cung nguong voi cong tac ARM, gia tri CRSF thang. */
+#define OFFBOARD_SWITCH_ON_THRESHOLD 1500
+
+/* Qua ngan nay khong co setpoint moi thi coi nhu Pi da hong.
+ * 500 ms = 10 chu ky o 20 Hz, du de nuot mot con giat lich cua ROS2. */
+#define OFFBOARD_TIMEOUT_MS 500
+
+/* Tran van toc ngang Pi duoc phep doi. Dat THAP hon POSHOLD_MAX_VEL_MPS. */
+#define OFFBOARD_MAX_VEL_MPS 2.0f
+
+/* Tran toc do len/xuong. */
+#define OFFBOARD_MAX_CLIMB_MPS 1.0f
+
+/* Tran do cao: vuot tran thi chi cho di xuong. */
+#define OFFBOARD_MAX_ALT_M 5.0f
+
+/* SAN DO CAO — BO TU 2026-09-13, KHONG CON TAC DUNG.
+ *
+ * San chan Pi ha canh (Pi phai ha cao bang setpoint theo marker), ma loi ich
+ * rat nho: laser nam dat da doc ~0,17 m nen san 0,3 m chi cao hon mat dat
+ * ~13 cm, va chinh no sinh loi GIAO_UOC 11.1 #11. Thay bang gioi han toc do
+ * xuong sat dat ben duoi.
+ *
+ * Define va tham so offboard_min_alt_m VAN GIU chi de bang tham so khong doi:
+ * doi bang (ke ca xoa mot dong) lam table_crc lech va MAT TOAN BO cau hinh da
+ * luu. Firmware khong doc tham so nay nua. */
+#define OFFBOARD_MIN_ALT_M 0.3f
+
+/* Xuong cham sat dat — thay cho san. Do cao uoc luong (so laser, nam dat doc
+ * ~0,17 m) duoi nguong nay thi toc do xuong bi kep ve OFFBOARD_SLOW_DESCENT_MPS.
+ * 1,2 m laser ~ 1 m tren mat dat. Muc dich: MOI lan cham dat trong OFFBOARD
+ * deu nhe — Pi ha canh co chu dich hay Pi loi ra lenh xuong deu vay.
+ * Hang so, KHONG phai tham so (xem ly do o tren). */
+#define OFFBOARD_SLOW_DESCENT_ALT_M 1.2f
+#define OFFBOARD_SLOW_DESCENT_MPS   0.3f
+
+/* Cong DISARM tu Pi (GIAO_UOC 11.1 #12, hop dong 1.3).
+ *
+ * Pi chi disarm duoc khi may bay GAN DAT: do cao uoc luong <= MOC MAT DAT +
+ * LINK_DISARM_MAX_HEIGHT_M. Cao hon thi tu choi — lenh DISARM tren khong la
+ * cat dong co giua troi, va mot loi logic phia Pi khong duoc phep lam vay.
+ * Ma ep param2 = 21196 van cat o moi do cao (quy uoc MAVLink). Nguoi lai cat
+ * bang ch5 KHONG qua cong nay.
+ *
+ * MOC MAT DAT LA HANG SO, KHONG LAY LUC ARM: nam dat laser doc ~0,17 m do cach
+ * lap. Lay luc arm thi arm luc dang cam tay se lech moc (Pi hoi 09-13). Dung
+ * tren buc thi laser do toi mat buc — dung voi do cao roi that.
+ *
+ * 20 cm: chu du an xac nhan khung chiu duoc roi tu do cao nay (~2 m/s). */
+#define LINK_DISARM_GROUND_M      0.17f
+#define LINK_DISARM_MAX_HEIGHT_M  0.20f
+
+/* Ma ep disarm o moi do cao — gia tri quy uoc cua MAVLink (PX4/ArduPilot). */
+#define LINK_DISARM_FORCE_MAGIC   21196.0f
+
+/* Tran toc do yaw Pi duoc phep doi. */
+#define OFFBOARD_MAX_YAW_DPS 90.0f
+
+/* Day can roll/pitch/yaw qua muc nay (0..1) = nguoi lai gianh lai quyen.
+ * 0,15 du cao de khong bi nhieu can kich hoat, du thap de mot cu day theo
+ * ban nang cung du. */
+#define OFFBOARD_STICK_OVERRIDE 0.15f
+
+/* So khung LIEN TIEP bi kep dai truoc khi coi la Pi hong han.
+ * Kep mot vai khung la binh thuong (Pi doi huong gap); kep lien tuc nghia la
+ * Pi dang tu tin ra mot lenh vo nghia. 20 khung o 20 Hz = 1 giay. */
+#define OFFBOARD_CLAMP_LIMIT 20
+
+/* ==========================================================================
  * Giữ độ cao (ALTHOLD) — cần ga điều khiển TỐC ĐỘ LÊN thay vì lực đẩy
  *
  * Cấu trúc hai vòng lồng nhau, xem App/Control/ctrl_althold.h.
@@ -442,9 +533,14 @@
 /*
  * Ga treo — số hạng NUÔI TIẾN, gánh phần lớn công việc.
  *
- * 0,35 chỉ là chỗ khởi đầu cho một khung 5 inch thông thường. PHẢI đo lại
- * trên chính máy bay này: sai 10 % ở đây là tích phân phải bù 10 %, mất vài
- * giây, và trong vài giây đó máy bay lên hoặc xuống mất kiểm soát.
+ * 0,65 LÀ SỐ ĐÃ ĐO trên chính máy bay này (chủ dự án, xác nhận 2026-09-14).
+ * Ga treo thật CAO HƠN 0,65 một chút — cố ý làm tròn xuống: đặt đúng số thật
+ * thì vừa arm là máy bay nhấp nhô ngay trên mặt đất vì hiệu ứng mặt đất.
+ * Sai lệch nhỏ đó do tích phân bù sau khi rời đất.
+ *
+ * Hệ quả với Pi arm (GIAO_UOC 11.1 #13): cần ga ở giữa -> lúc arm vòng giữ độ
+ * cao ra ~0,5 ga (ctrl_althold_enter nạp tích phân theo ga đang giữ), THẤP hơn
+ * ga treo, nên máy bay nằm yên trên đất cho tới khi Pi ra lệnh leo.
  */
 #define ALTHOLD_HOVER_THR 0.65f
 

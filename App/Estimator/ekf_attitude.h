@@ -85,6 +85,9 @@ float ekf_attitude_tilt_cos(void);
 /** Xoay một vector từ hệ thân sang hệ NED. */
 vec3f_t ekf_attitude_body_to_ned(vec3f_t v_body);
 
+/** Xoay một vector từ hệ NED sang hệ thân FRD — phép ngược của hàm trên. */
+vec3f_t ekf_attitude_ned_to_body(vec3f_t v_ned);
+
 /** true khi bộ lọc đã dựng xong quaternion ban đầu. */
 bool ekf_attitude_is_valid(void);
 

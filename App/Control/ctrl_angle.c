@@ -6,11 +6,23 @@
 #include "ctrl_angle.h"
 #include "ctrl_poshold.h"
 #include "ctrl_althold.h"
+#include "ctrl_offboard.h"
 #include "fc_state.h"
 #include "param_table.h"
 #include "fc_time.h"
 
 #define ANGLE_PERIOD_US (1000000UL / FC_ATTITUDE_RATE_HZ)
+
+/*
+ * OFFBOARD chạy trên đúng bộ máy của POSHOLD — chỉ khác nguồn của mục tiêu
+ * vận tốc. Mọi chỗ trước đây hỏi "có phải POSHOLD không" giờ phải hỏi câu
+ * rộng hơn này, nếu không OFFBOARD sẽ mất vòng giữ độ cao hoặc mất luôn vòng
+ * giữ vận tốc.
+ */
+static inline bool mode_uses_poshold(flight_mode_t m)
+{
+    return (m == FLIGHT_MODE_POSHOLD) || (m == FLIGHT_MODE_OFFBOARD);
+}
 
 static uint32_t      s_last_us;
 static bool          s_started;
@@ -27,6 +39,7 @@ void ctrl_angle_init(void)
     s_alt_active = false;
     ctrl_poshold_init();
     ctrl_althold_init();
+    ctrl_offboard_init();
 
     g_fc.ctrl.mode               = FLIGHT_MODE_ANGLE;
     g_fc.ctrl.setpoint_rate_dps  = (vec3f_t){ 0.0f, 0.0f, 0.0f };
@@ -79,6 +92,11 @@ static flight_mode_t read_mode_switch(void)
     return FLIGHT_MODE_ANGLE;
 }
 
+flight_mode_t ctrl_angle_switch_mode(void)
+{
+    return read_mode_switch();
+}
+
 bool ctrl_angle_update(uint32_t now_us)
 {
     if (fc_elapsed_us(now_us, s_last_us) < ANGLE_PERIOD_US) {
@@ -91,8 +109,27 @@ bool ctrl_angle_update(uint32_t now_us)
         return false;
     }
 
-    /* --- Chọn chế độ --- */
+    /*
+     * --- Chọn chế độ ---
+     *
+     * Chạy máy trạng thái OFFBOARD TRƯỚC khi chọn: nó là thứ quyết định
+     * OFFBOARD còn sống hay không, và mọi nhánh bên dưới đều hỏi nó.
+     * millis() cùng đồng hồ với mốc thời gian mà mav_link.c đóng dấu lên
+     * setpoint, nên phép tính hết hạn mới có nghĩa.
+     */
+    ctrl_offboard_update(millis());
+
     flight_mode_t want = read_mode_switch();
+
+    /*
+     * OFFBOARD ĐÈ LÊN công tắc chế độ. Không phải vì nó quan trọng hơn, mà vì
+     * nó CHỈ sống được khi công tắc cho phép riêng của nó đang bật — tức là
+     * người lái đã đồng ý rồi. Lúc nó tắt, dòng này không làm gì cả và công
+     * tắc chế độ lấy lại quyền ngay trong cùng nhịp.
+     */
+    if (ctrl_offboard_is_active()) {
+        want = FLIGHT_MODE_OFFBOARD;
+    }
 
     /*
      * Đòi ANGLE nhưng bộ ước lượng chưa có góc tin cậy: lùi về ACRO. Bám theo
@@ -101,14 +138,14 @@ bool ctrl_angle_update(uint32_t now_us)
      */
     s_fallback = false;
     if ((want == FLIGHT_MODE_ANGLE || want == FLIGHT_MODE_ALTHOLD ||
-         want == FLIGHT_MODE_POSHOLD) &&
+         mode_uses_poshold(want)) &&
         !g_fc.est.attitude_valid) {
         want       = FLIGHT_MODE_ACRO;
         s_fallback = true;
     }
 
     /* Rời POSHOLD thì xoá tích phân, nếu không lần vào lại nó bung ra ngay. */
-    if (s_mode == FLIGHT_MODE_POSHOLD && want != FLIGHT_MODE_POSHOLD) {
+    if (mode_uses_poshold(s_mode) && !mode_uses_poshold(want)) {
         ctrl_poshold_reset();
     }
 
@@ -140,7 +177,7 @@ bool ctrl_angle_update(uint32_t now_us)
      * ================================================================== */
     {
         const bool want_alt = (s_mode == FLIGHT_MODE_ALTHOLD ||
-                               s_mode == FLIGHT_MODE_POSHOLD);
+                               mode_uses_poshold(s_mode));
         const bool armed    = g_fc.motor.armed && (g_fc.mode == FC_MODE_ARMED);
 
         if (!want_alt || !armed) {
@@ -186,7 +223,9 @@ bool ctrl_angle_update(uint32_t now_us)
      * Không có la bàn thì yaw ước lượng trôi dần, giữ hướng theo nó là tự làm
      * máy bay quay đi. Xem chú thích về yaw trong ekf_attitude.h.
      */
-    const float yaw_rate = g_fc.rc.yaw * g_params.rate_max_yaw_dps;
+    const float yaw_rate = ctrl_offboard_is_active()
+                         ? ctrl_offboard_yaw_rate_dps()
+                         : (g_fc.rc.yaw * g_params.rate_max_yaw_dps);
 
     if (s_mode == FLIGHT_MODE_ACRO) {
         /* Cần ra thẳng tốc độ quay. */
@@ -204,11 +243,12 @@ bool ctrl_angle_update(uint32_t now_us)
     float target_roll  = g_fc.rc.roll  * g_params.angle_max_lean_deg * FC_DEG_TO_RAD;
     float target_pitch = g_fc.rc.pitch * g_params.angle_max_lean_deg * FC_DEG_TO_RAD;
 
-    if (s_mode == FLIGHT_MODE_POSHOLD) {
+    if (mode_uses_poshold(s_mode)) {
         /*
          * Góc mục tiêu do vòng giữ vận tốc quyết định thay vì cần điều khiển.
          * Mất flow thì nó trả false — lùi về ANGLE ngay tại đây, giữ nguyên
-         * góc mục tiêu tính từ cần ở trên.
+         * góc mục tiêu tính từ cần ở trên. OFFBOARD dùng chung đúng đường lùi
+         * này: mất flow là mất luôn nguồn đo của lệnh vận tốc từ Pi.
          */
         const float dt = (float)ANGLE_PERIOD_US * 1.0e-6f;
         if (ctrl_poshold_update(dt, &target_roll, &target_pitch)) {

@@ -7,6 +7,7 @@
 #include "ekf_velocity.h"
 #include "fc_state.h"
 #include "param_table.h"
+#include "ctrl_offboard.h"
 
 static float s_int_x;           /* tích phân trục thân X, độ */
 static float s_int_y;
@@ -83,7 +84,28 @@ bool ctrl_poshold_update(float dt, float *roll_rad, float *pitch_rad)
      */
     const bool stick_active = (g_fc.rc.pitch != 0.0f) || (g_fc.rc.roll != 0.0f);
 
-    if (stick_active || !g_fc.est.position_valid) {
+    if (ctrl_offboard_is_active()) {
+        /*
+         * --- OFFBOARD: mục tiêu vận tốc do máy tính nhúng đặt ---
+         *
+         * Lệnh đã qua đủ lớp lọc và giới hạn bao trong ctrl_offboard, nên tới
+         * đây nó chỉ còn là một mục tiêu vận tốc hệ thân bình thường — đúng
+         * thứ mà phần còn lại của hàm này vốn đã biết xử lý.
+         *
+         * Mốc vị trí BÁM THEO chỗ hiện tại, giống hệt nhánh cần điều khiển.
+         * Không bám thì lúc rời OFFBOARD máy bay quay đầu bò về điểm đã vào
+         * chế độ — đúng kiểu hỏng khiến người lái hoảng, và nó xảy ra đúng
+         * vào lúc vừa có sự cố.
+         */
+        const vec3f_t ext = ctrl_offboard_velocity_body();
+
+        tgt_fwd   = ext.x;
+        tgt_right = ext.y;
+
+        s_tgt_n      = g_fc.est.position_m.x;
+        s_tgt_e      = g_fc.est.position_m.y;
+        s_pos_locked = g_fc.est.position_valid;
+    } else if (stick_active || !g_fc.est.position_valid) {
         /*
          * --- Người lái đang cầm lái, hoặc chưa tin được vị trí ---
          *

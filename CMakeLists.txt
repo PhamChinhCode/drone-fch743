@@ -93,6 +93,21 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     ${USB_MSC_DIR}/Inc
 )
 
+# Git hash cho AUTOPILOT_VERSION.flight_custom_version (GIAO_UOC_FC_ROS2.md
+# muc 9.5). Target ALL nen chay o moi lan build; script chi ghi file khi hash
+# hoac trang thai "dirty" doi, nen khong kich build lai khi khong can.
+set(FC_GENERATED_DIR ${CMAKE_BINARY_DIR}/generated)
+add_custom_target(fc_git_version ALL
+    COMMAND ${CMAKE_COMMAND}
+            -DSRC=${CMAKE_CURRENT_SOURCE_DIR}
+            -DOUT=${FC_GENERATED_DIR}/fc_git_version.h
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/fc_git_version.cmake
+    BYPRODUCTS ${FC_GENERATED_DIR}/fc_git_version.h
+    COMMENT "Cap nhat fc_git_version.h"
+    VERBATIM)
+add_dependencies(${CMAKE_PROJECT_NAME} fc_git_version)
+target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${FC_GENERATED_DIR})
+
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined symbols

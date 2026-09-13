@@ -10,6 +10,9 @@
 #include "tlm_port.h"
 #include "fc_state.h"
 #include "arming.h"
+#include "ctrl_offboard.h"
+#include "fc_git_version.h"
+#include "mav_link.h"
 #include "fc_time.h"
 #include "qspi_flash.h"
 #include "flashlog.h"
@@ -392,6 +395,7 @@ static void cmd_help(void)
     cli_out("  help                 danh sach nay");
     cli_out("  version              board, firmware, table_crc");
     cli_out("  status               arm, cam bien, vong lap");
+    cli_out("  offboard             trang thai duong dieu khien tu Pi");
     cli_out("  get [tien_to]        in tham so khop tien to");
     cli_out("  set <ten>=<gia_tri>  dat gia tri, in lai so THUC SU nhan");
     cli_out("  dump                 in tat ca dang 'set ten=gia_tri'");
@@ -410,14 +414,64 @@ static void cmd_version(void)
     cli_out_int("fw major", FC_FIRMWARE_VERSION_MAJOR);
     cli_out_int("fw minor", FC_FIRMWARE_VERSION_MINOR);
     cli_out_int("fw patch", FC_FIRMWARE_VERSION_PATCH);
+    /* Cung 8 byte ma AUTOPILOT_VERSION.flight_custom_version phat len day. */
+    cli_out(FC_GIT_DIRTY ? "git " FC_GIT_HASH_STR " (CO THAY DOI CHUA COMMIT)"
+                         : "git " FC_GIT_HASH_STR);
+    cli_out_int("hop dong", MAV_CONTRACT_MAJOR * 10000 + MAV_CONTRACT_MINOR * 100);
     cli_out_int("so tham so", (int32_t)g_param_count);
     cli_out_hex("table_crc", param_table_crc32(), 8);
     cli_out_int("seq da luu", (int32_t)param_store_seq());
 }
 
+/*
+ * Trang thai duong dieu khien tu may tinh nhung.
+ *
+ * Day la cua so DUY NHAT nhin vao lop phong ve cua OFFBOARD tu duoi dat. Khi
+ * mot chuyen bay ket thuc som, 'thoat' tra loi cau hoi quan trong nhat: vi
+ * sao no roi ra. Ba bo dem phia sau phan biet ba kieu hong khac han nhau:
+ *   nhan cao, loai = 0        -> Pi khoe, duong truyen tot
+ *   loai tang               -> Pi gui sai hop dong (type_mask, he toa do)
+ *   kep tang                -> Pi gui dung dinh dang nhung lenh vuot bao
+ */
+static void cmd_offboard(void)
+{
+    const uint32_t now  = millis();
+    const uint32_t age  = ctrl_offboard_age_ms(now);
+
+    cli_out(ctrl_offboard_state_name(ctrl_offboard_state()));
+    cli_out(ctrl_offboard_exit_name(ctrl_offboard_last_exit()));
+
+    /*
+     * Pi co quyen ra lenh (ca ARM/DISARM) hay khong. Tach khoi trang thai o
+     * tren vi TAT co hai nghia: ch8 tat (khong quyen) va ch8 bat nhung chua
+     * arm (co quyen). Nhin trang thai thoi thi khong phan biet duoc.
+     */
+    cli_out_int("quyen_pi",     ctrl_offboard_pi_has_authority() ? 1 : 0);
+    cli_out_int("kenh_congtac", (int32_t)g_params.offboard_switch_channel);
+    cli_out_int("het_han_ms",   (int32_t)g_params.offboard_timeout_ms);
+
+    /* UINT32_MAX = chua bao gio nhan duoc setpoint nao. In -1 cho de doc. */
+    cli_out_int("tuoi_ms", (age == UINT32_MAX) ? -1 : (int32_t)age);
+
+    cli_out_int("nhan",  (int32_t)ctrl_offboard_accepted());
+    cli_out_int("loai",  (int32_t)ctrl_offboard_rejected());
+    cli_out_int("kep",   (int32_t)ctrl_offboard_clamped());
+
+    /* Muc tieu dang giu, nhan 1000 de khoi phai in so thuc. */
+    {
+        const vec3f_t v = ctrl_offboard_velocity_body();
+        cli_out_int("vtoi_mms",  (int32_t)(v.x * 1000.0f));
+        cli_out_int("vphai_mms", (int32_t)(v.y * 1000.0f));
+        cli_out_int("vlen_mms",  (int32_t)(ctrl_offboard_climb_mps() * 1000.0f));
+        cli_out_int("yaw_mdps",  (int32_t)(ctrl_offboard_yaw_rate_dps() * 1000.0f));
+    }
+}
+
 static void cmd_status(void)
 {
     cli_out(g_fc.mode == FC_MODE_ARMED ? "mode ARMED" : "mode DISARMED");
+    /* LOCKED / SAFE / ARMED — SAFE voi ch5+ch8 bat nghia la dang cho Pi arm. */
+    cli_out(arming_state_name(arming_get_state()));
     cli_out(arming_block_reason());
     cli_out_hex("error_flags", g_fc.sys.error_flags, 8);
     cli_out_hex("sensor_health", g_fc.sys.sensor_health, 4);
@@ -996,6 +1050,7 @@ bool cli_execute_ex(const char *line, const cli_sink_t *sink)
     if (strcmp(p, "help") == 0)     { cmd_help();    return true; }
     if (strcmp(p, "version") == 0)  { cmd_version(); return true; }
     if (strcmp(p, "status") == 0)   { cmd_status();  return true; }
+    if (strcmp(p, "offboard") == 0) { cmd_offboard(); return true; }
     if (strcmp(p, "set") == 0)      { return cmd_set(args); }
     if (strcmp(p, "save") == 0)     { cmd_save();    return true; }
     if (strcmp(p, "mode") == 0)     { cmd_mode(args); return true; }

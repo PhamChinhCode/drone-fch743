@@ -67,6 +67,9 @@ float ekf_altitude_accel_bias(void);
 /** Sai số chuẩn của độ cao, mét. Lấy từ đường chéo P. */
 float ekf_altitude_uncertainty_m(void);
 
+/** Độ không tin cậy 1-sigma của tốc độ lên/xuống, m/s — bộ lọc tự chấm, như trên. */
+float ekf_altitude_climb_uncertainty_mps(void);
+
 /** true khi đã có ít nhất một lần cập nhật từ cảm biến tuyệt đối. */
 bool ekf_altitude_is_valid(void);
 

@@ -51,6 +51,7 @@ typedef enum {
     FLIGHT_MODE_ANGLE,      /**< tự cân bằng theo góc nghiêng        */
     FLIGHT_MODE_ALTHOLD,    /**< giữ độ cao (baro + range)           */
     FLIGHT_MODE_POSHOLD,    /**< giữ vị trí (cần optical flow)       */
+    FLIGHT_MODE_OFFBOARD,   /**< nhận lệnh vận tốc từ máy tính nhúng  */
     FLIGHT_MODE_COUNT
 } flight_mode_t;
 
@@ -88,6 +89,22 @@ typedef enum {
      * tinh ghi de len nhau. Chan tuyet doi, khong co ngoai le.
      */
     ARM_BLOCK_USB_MSC       = (1u << 8),
+
+    /*
+     * Hai cờ dưới chỉ xuất hiện khi công tắc OFFBOARD (ch8) đang bật, tức là
+     * đang ở chế độ "Pi được phép arm". Do arming.c đặt, không phải
+     * fc_state_check_arm() — xem lý do ở hàm đó.
+     */
+    ARM_BLOCK_THR_NOT_CENTRE = (1u << 9),  /**< cần ga chưa về điểm giữa   */
+    ARM_BLOCK_PI_NO_AUTH     = (1u << 10), /**< Pi đang mất quyền: gạt ch8  */
+    ARM_BLOCK_PI_NOT_POSHOLD = (1u << 11), /**< chế độ Pi: ch6 chưa ở POSHOLD */
+    ARM_BLOCK_PI_WAIT_CH5    = (1u << 12), /**< chế độ Pi: chờ người lái gạt ch5 */
+
+    /*
+     * TOÀN BỘ bảng bit trên đây là HỢP ĐỒNG TRÊN DÂY từ hợp đồng 1.2: nó đi nguyên
+     * văn lên NAMED_VALUE_INT OB_ARM_BLK (GIAO_UOC mục 9.3). Bit mới chỉ được THÊM
+     * VÀO CUỐI, không đánh lại số — mav_link.c có static assert giữ việc này.
+     */
 } fc_arm_block_t;
 
 /** Cờ lỗi hệ thống, tích luỹ dần, chỉ xoá khi khởi động lại. */

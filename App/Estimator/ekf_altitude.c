@@ -194,3 +194,8 @@ float ekf_altitude_uncertainty_m(void)
 {
     return sqrtf(fmaxf(s_P[ST_H][ST_H], 0.0f));
 }
+
+float ekf_altitude_climb_uncertainty_mps(void)
+{
+    return sqrtf(fmaxf(s_P[ST_V][ST_V], 0.0f));
+}

@@ -177,10 +177,18 @@ bool fc_state_check_arm(void)
         block |= ARM_BLOCK_FAILSAFE;
     }
 
-    /* Cần gạt ga xuống thấp trước khi arm. */
-    if (g_fc.rc.throttle > g_params.arm_throttle_max_norm) {
-        block |= ARM_BLOCK_THROTTLE_HIGH;
-    }
+    /*
+     * KHÔNG kiểm tra vị trí cần ga ở đây — cố ý.
+     *
+     * Vị trí ga đúng phụ thuộc vào CÁCH arm, không phải tình trạng máy bay:
+     *   - arm tay bằng ch5  -> ga phải ở THẤP, nếu không máy bay nhảy lên
+     *   - Pi arm (ch8 bật)  -> ga phải ở GIỮA, vì OFFBOARD coi ga lệch khỏi
+     *                          giữa là "người lái chạm cần" và thoát ngay
+     * Hai yêu cầu loại trừ nhau. Hàm này lại bị fc_state_set_mode() gọi lại
+     * mà không có ngữ cảnh, nên để kiểm tra ga ở đây thì Pi KHÔNG BAO GIỜ arm
+     * được. Chính sách ga do arming.c áp — nơi duy nhất gọi
+     * fc_state_set_mode(FC_MODE_ARMED), và là nơi biết đang arm theo cách nào.
+     */
 
     /* Gyro phải hiệu chuẩn xong. */
     if (!g_fc.imu.calibrated) {
@@ -326,6 +334,7 @@ const char *fc_flight_mode_name(flight_mode_t mode)
         [FLIGHT_MODE_ANGLE]   = "ANGLE",
         [FLIGHT_MODE_ALTHOLD] = "ALTHOLD",
         [FLIGHT_MODE_POSHOLD] = "POSHOLD",
+        [FLIGHT_MODE_OFFBOARD] = "OFFBOARD",
     };
     return (mode < FLIGHT_MODE_COUNT) ? names[mode] : "?";
 }

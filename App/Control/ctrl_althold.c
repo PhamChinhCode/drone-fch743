@@ -6,6 +6,26 @@
 #include "mixer.h"
 #include "fc_state.h"
 #include "param_table.h"
+#include "ctrl_offboard.h"
+
+/*
+ * Cần ga quy về khoảng [-1, +1] quanh điểm giữa.
+ *
+ * Điểm giữa lấy từ tham số chứ không cứng bằng 0,5: nhiều tay điều khiển có
+ * cần ga không lò xo, và người lái quen đặt điểm "giữ" ở chỗ khác.
+ *
+ * Tách ra hàm riêng để ctrl_althold_stick_centred() dùng đúng phép tính này —
+ * hai chỗ tính lệch nhau một chút là đủ để OFFBOARD thoát trong khi vòng giữ
+ * độ cao vẫn tưởng cần đang ở giữa.
+ */
+static float stick_dev(void)
+{
+    const float centre = g_params.althold_stick_centre;
+    const float span   = (centre > 0.5f) ? centre : (1.0f - centre);
+
+    const float dev = (g_fc.rc.throttle - centre) / ((span > 0.05f) ? span : 0.05f);
+    return fc_constrainf(dev, -1.0f, 1.0f);
+}
 
 #include <math.h>
 
@@ -71,21 +91,19 @@ bool ctrl_althold_update(float dt, float *throttle_out)
 
     /* ================= Vòng ngoài: cần ga -> tốc độ lên mong muốn ========= */
 
-    /*
-     * Cần ga quy về khoảng [-1, +1] quanh điểm giữa, rồi trừ vùng chết.
-     *
-     * Điểm giữa lấy từ tham số chứ không cứng bằng 0,5: nhiều tay điều khiển
-     * có cần ga không lò xo, và người lái quen đặt điểm "giữ" ở chỗ khác.
-     */
-    const float centre = g_params.althold_stick_centre;
-    const float span   = (centre > 0.5f) ? centre : (1.0f - centre);
+    /* Cần ga quy về [-1, +1] quanh điểm giữa — xem stick_dev(). */
+    const float dev = stick_dev();
+    const float db  = g_params.althold_stick_deadband;
 
-    float dev = (g_fc.rc.throttle - centre) / ((span > 0.05f) ? span : 0.05f);
-    dev = fc_constrainf(dev, -1.0f, 1.0f);
-
-    const float db = g_params.althold_stick_deadband;
-
-    if (fabsf(dev) <= db) {
+    if (ctrl_offboard_is_active() && fabsf(dev) <= db) {
+        /*
+         * OFFBOARD và người lái chưa chạm cần ga: tốc độ lên do máy tính
+         * nhúng đặt. Mốc độ cao bám theo chỗ hiện tại, nên lúc rời OFFBOARD
+         * là chốt ngay tại đó chứ không bò về độ cao cũ.
+         */
+        s_climb_target = ctrl_offboard_climb_mps();
+        s_target_m     = alt;
+    } else if (fabsf(dev) <= db) {
         /*
          * Cần ở giữa: GIỮ. Sai số độ cao đổi ra tốc độ lên mong muốn bằng
          * khâu P, rồi kẹp lại — không có kẹp thì lệch 10 m sẽ đòi một tốc độ
@@ -96,6 +114,17 @@ bool ctrl_althold_update(float dt, float *throttle_out)
             -g_params.althold_max_climb_mps,
              g_params.althold_max_climb_mps);
     } else {
+        /*
+         * Cần ga ra khỏi vùng chết. Nếu đang OFFBOARD thì đây là người lái
+         * giành lại quyền trên trục đứng — thoát hẳn OFFBOARD, đừng chia đôi
+         * thẩm quyền giữa người và máy. Hàm này vô hại khi không ở OFFBOARD.
+         *
+         * Cần ga xử lý ở đây chứ không ở stick_override() của ctrl_offboard:
+         * nó không về giữa theo lò xo nên chỉ có vùng chết của chính vòng này
+         * mới biết thế nào là "đang chạm".
+         */
+        ctrl_offboard_request_exit(OFFBOARD_EXIT_STICK);
+
         /*
          * Cần ra khỏi vùng chết: người lái ra lệnh tốc độ lên/xuống.
          *
@@ -161,6 +190,11 @@ bool ctrl_althold_update(float dt, float *throttle_out)
     *throttle_out = fc_constrainf(thr, g_params.althold_thr_min,
                                        g_params.althold_thr_max);
     return true;
+}
+
+bool ctrl_althold_stick_centred(void)
+{
+    return fabsf(stick_dev()) <= g_params.althold_stick_deadband;
 }
 
 float ctrl_althold_target_m(void)     { return s_target_m; }

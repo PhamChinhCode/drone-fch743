@@ -61,6 +61,14 @@
  * Kiểu dữ liệu
  * ========================================================================== */
 
+/** Kết quả một lệnh arm/disarm đến từ máy tính nhúng. */
+typedef enum {
+    ARMING_LINK_OK = 0,        /**< đã làm, hoặc vốn đã ở trạng thái đó     */
+    ARMING_LINK_NO_AUTHORITY,  /**< Pi không có quyền: ch8/ch5 chưa đúng,
+                                    hoặc người lái đã giành lái             */
+    ARMING_LINK_BLOCKED        /**< có quyền nhưng chưa đủ điều kiện arm    */
+} arming_link_result_t;
+
 typedef enum {
     ARMING_LOCKED = 0,  /**< khoá — phải gạt công tắc về OFF mới thoát  */
     ARMING_SAFE,        /**< công tắc đang OFF, sẵn sàng nhận lệnh arm  */
@@ -91,22 +99,72 @@ void arming_init(void);
  */
 void arming_update(uint32_t now_ms);
 
-/**
- * Ra lệnh disarm từ bên ngoài (hiện tại: MAV_CMD_COMPONENT_ARM_DISARM trên
- * UART8). Đây là lối vào DUY NHẤT cho phép mã ngoài module này disarm.
+/*
+ * --- LỆNH ARM / DISARM TỪ MÁY TÍNH NHÚNG --------------------------------------
  *
- * VÌ SAO KHÔNG GỌI THẲNG fc_state_set_mode(FC_MODE_DISARMED):
- *   Gọi thẳng thì g_fc.mode về DISARMED nhưng s_state vẫn kẹt ở ARMING_ARMED.
- *   Máy trạng thái và trạng thái thật lệch nhau, và nhánh "công tắc về OFF"
- *   không còn chạy nữa — tức công tắc trên tay điều khiển mất tác dụng.
+ * CHẾ ĐỘ PI: bật khi công tắc OFFBOARD (ch8) đang ON. Lúc đó công tắc ARM
+ * (ch5) đổi nghĩa từ "arm ngay" thành "cho phép Pi arm". Quy trình:
  *
- * SAU KHI GỌI, MÁY TRẠNG THÁI VỀ LOCKED: người lái phải gạt công tắc về OFF
- * rồi bật lại mới bay tiếp được. Cố ý làm vậy — một lệnh cắt từ máy tính
- * nhúng không được phép tự phục hồi khi công tắc vẫn đang ON.
+ *   1. Đưa cần ga về GIỮA   (chế độ Pi đòi ga ở giữa, không phải ở thấp)
+ *   2. Gạt ch8 lên          (PHẢI TRƯỚC ch5 — xem dưới)
+ *   3. Gạt ch5 lên          -> FC không tự arm, đứng chờ
+ *   4. Pi gửi lệnh ARM      -> arm
  *
- *  true nếu sau lệnh này máy bay chắc chắn đã disarm.
+ * Sai thứ tự (ch5 trước ch8) thì nhánh arm tay chạy, thấy ga không thấp ->
+ * khoá. Vô hại, gạt ch5 một vòng là xong.
+ *
+ * Pi MẤT QUYỀN (cả arm lẫn disarm) khi người lái chạm bất kỳ cần nào sau khi
+ * đã arm, hoặc mất sóng. Lấy lại quyền CHỈ bằng cách gạt ch8 xuống rồi lên.
+ * Người lái thì LUÔN cắt được bằng ch5, bất kể Pi có quyền hay không.
+ *
+ * VÌ SAO KHÔNG GỌI THẲNG fc_state_set_mode():
+ *   Gọi thẳng thì g_fc.mode đổi nhưng s_state không đổi theo. Máy trạng thái
+ *   và trạng thái thật lệch nhau, và nhánh "công tắc về OFF" không còn chạy
+ *   nữa — tức công tắc trên tay điều khiển mất tác dụng.
  */
-bool arming_request_disarm(void);
+
+/** Pi yêu cầu arm. Chỉ thành công ở chế độ Pi, đúng quy trình trên. */
+arming_link_result_t arming_request_arm_link(void);
+
+/**
+ * true nếu gửi ARM từ Pi NGAY LÚC NÀY sẽ được ACCEPTED. Phát lên dây thành
+ * NAMED_VALUE_INT OB_ARM_RDY (GIAO_UOC mục 6.3).
+ *
+ * Dùng CHUNG đúng một hàm kiểm với arming_request_arm_link(), nên hai thứ không
+ * thể lệch nhau trong cùng một vòng lặp. Ngoại lệ duy nhất là thời gian: giá
+ * trị lên dây 2 Hz, trong nửa giây đó người lái vẫn có thể chạm cần, và lúc
+ * lệnh ARM tới nơi thì FC kiểm lại từ đầu. COMMAND_ACK là câu trả lời cuối.
+ *
+ * false khi đã arm.
+ */
+bool arming_link_arm_ready(void);
+
+/**
+ * Lý do chưa sẵn sàng arm: bitmask fc_arm_block_t. Phát lên dây thành
+ * NAMED_VALUE_INT OB_ARM_BLK. Trả 0 khi đã arm — lúc đó các cờ chặn arm không
+ * còn nghĩa gì.
+ */
+uint32_t arming_link_arm_block(void);
+
+/**
+ * Pi yêu cầu disarm. Sau khi disarm, máy trạng thái về SAFE (không khoá) để
+ * Pi arm lại được mà người lái không phải làm gì.
+ *
+ * Cổng độ cao (GIAO_UOC 11.1 #12): chỉ disarm khi máy bay gần đất — xem
+ * LINK_DISARM_* trong fc_config.h. Cao hơn thì trả ARMING_LINK_BLOCKED.
+ * force = true (Pi gửi param2 = 21196) bỏ qua cổng độ cao, KHÔNG bỏ qua quyền.
+ */
+arming_link_result_t arming_request_disarm(bool force);
+
+/**
+ * true nếu gửi DISARM thường (không ép) NGAY LÚC NÀY sẽ được ACCEPTED VÀ thật
+ * sự cắt động cơ. Phát lên dây thành NAMED_VALUE_INT OB_DIS_RDY.
+ *
+ * Cùng một hàm kiểm với arming_request_disarm(), cùng cách hiểu với
+ * OB_ARM_RDY: false khi chưa arm hoặc Pi không có quyền — dù DISARM lúc chưa
+ * arm vẫn trả ACCEPTED (không có gì để cắt, 6.2).
+ */
+bool arming_link_disarm_ready(void);
 
 arming_state_t        arming_get_state(void);
 arming_disarm_cause_t arming_last_disarm_cause(void);

@@ -57,6 +57,16 @@ bool ctrl_angle_update(uint32_t now_us);
 /** Chế độ đang thực sự chạy (có thể khác cần gạt nếu phải lùi về ACRO). */
 flight_mode_t ctrl_angle_active_mode(void);
 
+/**
+ * Chế độ mà CÔNG TẮC ch6 đang chọn — không phải chế độ đang chạy.
+ *
+ * Hai thứ khác nhau: đang OFFBOARD thì chế độ chạy là OFFBOARD còn công tắc
+ * vẫn chỉ POSHOLD; mất flow thì chế độ chạy tụt về ANGLE còn công tắc vẫn chỉ
+ * POSHOLD. OFFBOARD và arming.c cần câu hỏi thứ hai: "người lái đã đặt đường
+ * lùi an toàn chưa" (GIAO_UOC_FC_ROS2.md mục 6.3).
+ */
+flight_mode_t ctrl_angle_switch_mode(void);
+
 /** true khi công tắc đòi ANGLE nhưng phải lùi về ACRO vì chưa có góc. */
 bool ctrl_angle_fallback(void);
 

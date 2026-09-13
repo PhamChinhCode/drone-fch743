@@ -79,4 +79,14 @@ float ctrl_althold_target_m(void);       /**< mốc độ cao đang giữ       
 float ctrl_althold_climb_target(void);   /**< tốc độ lên mong muốn, m/s  */
 float ctrl_althold_integral(void);       /**< phần tích phân của ga      */
 
+/**
+ * Cần ga có đang nằm trong vùng chết quanh điểm giữa không.
+ *
+ * Một nguồn sự thật duy nhất cho câu hỏi "người lái có đang chạm cần ga
+ * không". Dùng chung bởi vòng giữ độ cao, bởi OFFBOARD (chạm cần = thoát),
+ * và bởi arming.c (Pi chỉ được arm khi ga ở giữa). Không phụ thuộc chế độ
+ * bay đang chạy — chỉ đọc cần và tham số.
+ */
+bool ctrl_althold_stick_centred(void);
+
 #endif /* CTRL_ALTHOLD_H */

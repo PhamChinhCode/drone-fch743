@@ -85,6 +85,15 @@ float ekf_velocity_east(void);
 /** Vận tốc hệ THÂN suy từ mẫu flow gần nhất — dùng để kiểm chứng bằng mắt. */
 vec3f_t ekf_velocity_body_measured(void);
 
+/**
+ * Độ không tin cậy 1-sigma của vận tốc ngang, m/s, lấy từ ma trận hiệp phương
+ * sai của bộ lọc (trung bình hai trục bắc - đông).
+ *
+ * ĐÂY LÀ BỘ LỌC TỰ CHẤM ĐIỂM CHÍNH NÓ, không phải sai số tuyệt đối: nó không mô
+ * hình hoá lệch lắp đặt, trôi bias gia tốc kế, hay rung khi có điện động cơ.
+ * Dùng làm trọng số TƯƠNG ĐỐI thì được; coi là sai số thật thì tin thái quá.
+ * Dự kiến dùng cho ODOMETRY (331) — App/Docs/GIAO_UOC_FC_ROS2.md mục 10.6c.
+ */
 float ekf_velocity_uncertainty_mps(void);
 
 /**

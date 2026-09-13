@@ -94,6 +94,27 @@ P(poshold_max_tilt_deg,  float, PT_F32, 0, 3.0f,  30.0f,   POSHOLD_MAX_TILT_DEG)
 P(poshold_pos_kp,        float, PT_F32, 0, 0.0f,  3.0f,    POSHOLD_POS_KP)
 
 /* ==========================================================================
+ * OFFBOARD — lenh van toc tu may tinh nhung
+ *
+ * offboard_switch_channel mac dinh 7 (= ch8 tren tay cam, dem tu 0).
+ * -1 = tat han. Xem ly do trong fc_config.h.
+ * Min/max o day la lop chan cuoi: du app PC hay CLI gui gi, firmware van kep.
+ * ========================================================================== */
+P(offboard_max_vel_mps,   float, PT_F32, 0, 0.1f, 3.0f,   OFFBOARD_MAX_VEL_MPS)
+P(offboard_max_climb_mps, float, PT_F32, 0, 0.1f, 2.0f,   OFFBOARD_MAX_CLIMB_MPS)
+P(offboard_max_alt_m,     float, PT_F32, 0, 0.5f, 30.0f,  OFFBOARD_MAX_ALT_M)
+/* offboard_min_alt_m: KHONG CON TAC DUNG tu 2026-09-13 (bo san do cao), giu
+ * lai chi de bang tham so khong doi — xem fc_config.h. */
+P(offboard_min_alt_m,     float, PT_F32, 0, 0.0f, 3.0f,   OFFBOARD_MIN_ALT_M)
+P(offboard_max_yaw_dps,   float, PT_F32, 0, 0.0f, 180.0f, OFFBOARD_MAX_YAW_DPS)
+P(offboard_stick_override,float, PT_F32, 0, 0.05f, 0.5f,  OFFBOARD_STICK_OVERRIDE)
+P(offboard_timeout_ms,    uint16_t, PT_U16, 0, 100.0f, 2000.0f, OFFBOARD_TIMEOUT_MS)
+P(offboard_switch_on,     uint16_t, PT_U16, 0, 1000.0f, 2000.0f, OFFBOARD_SWITCH_ON_THRESHOLD)
+P(offboard_clamp_limit,   uint16_t, PT_U16, 0, 1.0f, 200.0f, OFFBOARD_CLAMP_LIMIT)
+/* -1 = tat han. Kieu co dau, giong rc_mode_channel. */
+P(offboard_switch_channel, int8_t, PT_I8, PARAM_FLAG_DANGER, -1.0f, 15.0f, OFFBOARD_SWITCH_CHANNEL)
+
+/* ==========================================================================
  * Giữ độ cao (ALTHOLD)
  *
  * althold_hover_thr là số PHẢI ĐO trên chính máy bay này, không đoán — xem

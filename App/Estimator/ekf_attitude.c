@@ -766,6 +766,16 @@ vec3f_t ekf_attitude_body_to_ned(vec3f_t v)
     };
 }
 
+vec3f_t ekf_attitude_ned_to_body(vec3f_t v)
+{
+    /* Ma trận xoay trực giao: nghịch đảo chính là chuyển vị. */
+    return (vec3f_t){
+        s_R[0][0] * v.x + s_R[1][0] * v.y + s_R[2][0] * v.z,
+        s_R[0][1] * v.x + s_R[1][1] * v.y + s_R[2][1] * v.z,
+        s_R[0][2] * v.x + s_R[1][2] * v.y + s_R[2][2] * v.z
+    };
+}
+
 float ekf_attitude_uncertainty_deg(void)
 {
     /* Chỉ lấy hai trục roll/pitch: yaw không quan sát được nên phương sai của

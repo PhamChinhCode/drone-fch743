@@ -5,24 +5,26 @@
  * MỤC ĐÍCH: nối bộ điều khiển bay với máy tính nhúng chạy ROS2 (MAVROS hoặc
  * node tự viết) qua UART8, phục vụ bài toán bay gắp hàng.
  *
- * ĐÂY LÀ MỨC 1 — CHỈ GIÁM SÁT VÀ CẮT KHẨN CẤP.
- *   Máy tính nhúng ĐỌC được trạng thái máy bay và RA LỆNH DISARM. Nó KHÔNG
- *   điều khiển được chuyến bay: chưa có OFFBOARD, chưa nhận setpoint vị trí,
- *   chưa nhận pose từ VIO. Bay vẫn hoàn toàn do người lái trên tay điều khiển.
+ * HỢP ĐỒNG: App/Docs/GIAO_UOC_FC_ROS2.md là nguồn sự thật DUY NHẤT cho mọi thứ
+ * đi qua UART8 (bảng phát mục 4, bảng nhận mục 5, sổ đăng ký mục 9). File này
+ * chỉ tóm tắt; khi lệch nhau, giao ước đúng. Phiên bản hiện thực:
+ * MAV_CONTRACT_MAJOR.MAV_CONTRACT_MINOR bên dưới.
  *
- * BẢNG PHÁT (xem s_rates trong mav_link.c):
- *   HEARTBEAT    1 Hz   — bắt buộc, MAVROS dựa vào đây để nhận diện
- *   SYS_STATUS   2 Hz   — pin, tình trạng cảm biến
- *   ATTITUDE    50 Hz   — góc và tốc độ góc
- *   VFR_HUD     10 Hz   — độ cao, tốc độ, hướng, ga
- *
- *   Tổng khoảng 2,6 KB/s. Ở 921600 baud (92 KB/s) là 3% băng thông.
+ * PHÁT (s_rates trong mav_link.c):
+ *   HEARTBEAT 1 Hz, SYS_STATUS 2 Hz, ATTITUDE 50 Hz, VFR_HUD 10 Hz,
+ *   GLOBAL_POSITION_INT 10 Hz, LOCAL_POSITION_NED 30 Hz, HIGHRES_IMU 50 Hz,
+ *   BATTERY_STATUS 1 Hz, EXTENDED_SYS_STATE 1 Hz, DISTANCE_SENSOR 20 Hz,
+ *   NAMED_VALUE_INT OB_STATE/OB_AUTH/OB_EXIT/FC_CTR_VER 2 Hz.
+ *   Theo sự kiện: COMMAND_ACK, AUTOPILOT_VERSION, STATUSTEXT (chuyển trạng
+ *   thái OFFBOARD). Ước khoảng 9 KB/s, ~10 % băng thông 921600.
  *
  * NHẬN:
- *   HEARTBEAT     — theo dõi đường truyền còn sống
- *   COMMAND_LONG  — chỉ MAV_CMD_COMPONENT_ARM_DISARM, và CHỈ chiều DISARM.
- *                   Lệnh ARM luôn bị từ chối, xem lý do ở mav_link.c.
- *   Mọi bản tin khác bị bỏ qua trong im lặng.
+ *   HEARTBEAT                      — theo dõi đường truyền còn sống
+ *   SET_POSITION_TARGET_LOCAL_NED  — setpoint vận tốc, xem ctrl_offboard.h
+ *   COMMAND_LONG ARM_DISARM (400)  — chỉ ở chế độ Pi và khi Pi còn quyền, arming.h
+ *   COMMAND_LONG 520, 512 (p1=148) — trả AUTOPILOT_VERSION
+ *   Mọi bản tin khác bị bỏ qua. Mọi COMMAND_LONG đều được trả COMMAND_ACK, kể
+ *   cả lệnh không hỗ trợ — thiếu ACK thì service bên MAVROS treo tới hết giờ.
  *
  * ĐỊNH DANH:
  *   system_id = 1, component_id = MAV_COMP_ID_AUTOPILOT1. Đặt fcu_url của
@@ -36,6 +38,17 @@
 
 /** Định danh MAVLink của bộ điều khiển bay này. */
 #define MAV_SYSTEM_ID     1
+
+/**
+ * Phiên bản hợp đồng FC <-> Pi mà firmware này hiện thực
+ * (App/Docs/GIAO_UOC_FC_ROS2.md, mục 10.1). Phát lên dây qua NAMED_VALUE_INT
+ * `FC_CTR_VER` = MAJOR*10000 + MINOR*100.
+ *
+ * Tăng theo ĐÚNG quy tắc mục 10.1 của giao ước, và CÙNG LÚC với bảng lịch sử
+ * phiên bản trong tài liệu đó. Lệch hai chỗ này là Pi đọc sai hợp đồng.
+ */
+#define MAV_CONTRACT_MAJOR  1
+#define MAV_CONTRACT_MINOR  4
 
 /** Quá thời gian này không nhận được HEARTBEAT thì coi như mất máy tính nhúng. */
 #define MAV_LINK_TIMEOUT_MS  3000u
