@@ -176,9 +176,9 @@ static void send_sys_status(void)
      * estimator.c, va no da nam san trong blackboard nen khong phai keo them
      * phu thuoc vao module uoc luong.
      *
-     * MAVLink khong co cho cho co hop le rieng cua tung truong trong
-     * LOCAL_POSITION_NED, nen bit nay la kenh duy nhat bao duoc dieu do cho
-     * toi khi co ODOMETRY (331) mang covariance di kem.
+     * Bit nay doi CUNG KHUNG voi covariance 1e6 cua ODOMETRY (331) — hai kenh
+     * doc cung mot bien. (Truoc 1.5 bit nay con phuc vu LOCAL_POSITION_NED,
+     * nay da ngung phat.)
      */
     if (g_fc.est.position_valid) {
         health |= MAV_SYS_STATUS_SENSOR_OPTICAL_FLOW;
@@ -224,36 +224,12 @@ static void send_attitude(uint32_t now_ms)
     send_msg(&msg);
 }
 
-static void send_vfr_hud(void)
-{
-    mavlink_message_t msg;
-
-    const float vx = g_fc.est.velocity_mps.x;
-    const float vy = g_fc.est.velocity_mps.y;
-    const float ground_speed = sqrtf(vx * vx + vy * vy);
-
-    /* heading: 0..359 độ theo quy ước la bàn. yaw của bộ ước lượng là -pi..+pi. */
-    float heading_deg = g_fc.est.attitude_rad.yaw * FC_RAD_TO_DEG;
-    if (heading_deg < 0.0f) {
-        heading_deg += 360.0f;
-    }
-
-    mavlink_msg_vfr_hud_pack(MAV_SYSTEM_ID, MAV_COMP_ID_AUTOPILOT1, &msg,
-                             0.0f,                     /* không có ống pitot */
-                             ground_speed,
-                             (int16_t)heading_deg,
-                             (uint16_t)(g_fc.ctrl.throttle_cmd * 100.0f),
-                             g_fc.est.altitude_m,
-                             g_fc.est.climb_rate_mps);
-    send_msg(&msg);
-}
-
 /*
  * --- GLOBAL_POSITION_INT (33) ---
  *
- * Bo mach nay KHONG co GPS. Van phai phat, vi optical_flow_node ben Pi doc
- * truong relative_alt de quy doi dich chuyen pixel ra met — thieu ban tin nay
- * thi callback cua no khong bao gio chay.
+ * Bo mach nay KHONG co GPS. Tu hop dong 1.5 chi con 1 Hz (GIAO_UOC 11.1 #14):
+ * optical_flow_node ben Pi da chuyen sang lay do cao tu laser (DISTANCE_SENSOR),
+ * ban tin nay chi con cho telemetry_aggregator hien thi len GCS.
  *
  * lat/lon = 0 va hdg = 65535 la cach bao "khong biet" theo dung dac ta. Chi
  * alt, relative_alt va vx/vy/vz mang thong tin that.
@@ -276,33 +252,19 @@ static void send_global_position_int(uint32_t now_ms)
 }
 
 /*
- * --- LOCAL_POSITION_NED (32) ---
+ * --- LOCAL_POSITION_NED (32) va VFR_HUD (74): NGUNG PHAT tu hop dong 1.5 ---
  *
- * DO TIN CAY KHONG DONG DEU GIUA CAC TRUC: x/y la tich phan van toc optical
- * flow, tuc dan duong suy tinh thuan tuy — sai so tich luy va khong bao gio tu
- * het (xem khoi chu thich trong App/Estimator/estimator.c). Ben Pi chi duoc
- * dung chung de giu cho trong vai chuc giay, TUYET DOI khong de bay ve diem
- * xuat phat. Rieng truong z lay tu EKF do cao nen dang tin.
+ * GIAO_UOC 11.1 #14: Pi 4 bao hoa CPU, mavros_node giai ma MOI ban tin toi du
+ * khong plugin nao dung. LOCAL_POSITION_NED trung du lieu voi ODOMETRY (331,
+ * co covariance) — da chay song song tu 1.2 dung nhu 10.4; VFR_HUD chi de hien
+ * thi. Pi tat ca hai plugin 09-14. So 32, 74 khong tai su dung cho viec khac.
  */
-static void send_local_position_ned(uint32_t now_ms)
-{
-    mavlink_message_t msg;
-
-    mavlink_msg_local_position_ned_pack(MAV_SYSTEM_ID, MAV_COMP_ID_AUTOPILOT1, &msg,
-                                        now_ms,
-                                        g_fc.est.position_m.x,
-                                        g_fc.est.position_m.y,
-                                        g_fc.est.position_m.z,
-                                        g_fc.est.velocity_mps.x,
-                                        g_fc.est.velocity_mps.y,
-                                        g_fc.est.velocity_mps.z);
-    send_msg(&msg);
-}
 
 /*
  * --- ODOMETRY (331) --- hợp đồng 1.2, GIAO_UOC mục 11.2 "Cách điền ODOMETRY".
  *
- * Chạy SONG SONG LOCAL_POSITION_NED một chu kỳ rồi mới phế bỏ bản kia (10.4).
+ * Đã chạy song song LOCAL_POSITION_NED từ 1.2 tới 1.4; từ 1.5 là bản tin vị trí/
+ * vận tốc DUY NHẤT (LOCAL_POSITION_NED ngừng, GIAO_UOC 11.1 #14).
  *
  * VẬN TỐC LÀ HỆ THÂN FRD, KHÔNG PHẢI NED: MAVROS không đọc child_frame_id mà
  * luôn coi vx/vy/vz là thân FRD. Điền nhầm NED thì ROS nhận sai im lặng. Xoay
@@ -880,9 +842,7 @@ typedef struct {
 static void tick_heartbeat  (uint32_t now_ms) { (void)now_ms; send_heartbeat();        }
 static void tick_sys_status (uint32_t now_ms) { (void)now_ms; send_sys_status();       }
 static void tick_attitude   (uint32_t now_ms) { send_attitude(now_ms);                 }
-static void tick_vfr_hud    (uint32_t now_ms) { (void)now_ms; send_vfr_hud();          }
 static void tick_global_pos (uint32_t now_ms) { send_global_position_int(now_ms);      }
-static void tick_local_pos  (uint32_t now_ms) { send_local_position_ned(now_ms);       }
 static void tick_odometry   (uint32_t now_ms) { send_odometry(now_ms);                 }
 static void tick_rc_channels(uint32_t now_ms) { send_rc_channels(now_ms);              }
 static void tick_highres_imu(uint32_t now_ms) { send_highres_imu(now_ms);              }
@@ -895,12 +855,10 @@ static void tick_distance   (uint32_t now_ms) { send_distance_sensor(now_ms);   
 static mav_sched_t s_rates[] = {
     { 1000, 0, tick_heartbeat   },   /*  1 Hz */
     {  500, 0, tick_sys_status  },   /*  2 Hz */
-    {   20, 0, tick_attitude    },   /* 50 Hz */
-    {  100, 0, tick_vfr_hud     },   /* 10 Hz */
-    {  100, 0, tick_global_pos  },   /* 10 Hz */
-    {   33, 0, tick_local_pos   },   /* 30 Hz */
-    {   33, 0, tick_odometry    },   /* 30 Hz — ODOMETRY, song song LOCAL_POSITION_NED (10.4) */
-    {   20, 0, tick_highres_imu },   /* 50 Hz */
+    {   33, 0, tick_attitude    },   /* 30 Hz — 1.5: 50 -> 30, EKF Pi chạy 30 Hz (11.1 #14) */
+    { 1000, 0, tick_global_pos  },   /*  1 Hz — 1.5: 10 -> 1, chỉ còn hiển thị GCS */
+    {   33, 0, tick_odometry    },   /* 30 Hz — ODOMETRY */
+    {   33, 0, tick_highres_imu },   /* 30 Hz — 1.5: 50 -> 30 */
     { 1000, 0, tick_battery     },   /*  1 Hz */
     { 1000, 0, tick_ext_state   },   /*  1 Hz */
     {  500, 0, tick_offboard    },   /*  2 Hz — OB_STATE/AUTH/EXIT, FC_CTR_VER/DIRTY, OB_ARM_RDY/BLK */

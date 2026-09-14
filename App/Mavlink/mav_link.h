@@ -11,12 +11,12 @@
  * MAV_CONTRACT_MAJOR.MAV_CONTRACT_MINOR bên dưới.
  *
  * PHÁT (s_rates trong mav_link.c):
- *   HEARTBEAT 1 Hz, SYS_STATUS 2 Hz, ATTITUDE 50 Hz, VFR_HUD 10 Hz,
- *   GLOBAL_POSITION_INT 10 Hz, LOCAL_POSITION_NED 30 Hz, HIGHRES_IMU 50 Hz,
+ *   (hợp đồng 1.5) HEARTBEAT 1 Hz, SYS_STATUS 2 Hz, ATTITUDE 30 Hz,
+ *   HIGHRES_IMU 30 Hz, ODOMETRY 30 Hz, GLOBAL_POSITION_INT 1 Hz,
  *   BATTERY_STATUS 1 Hz, EXTENDED_SYS_STATE 1 Hz, DISTANCE_SENSOR 20 Hz,
- *   NAMED_VALUE_INT OB_STATE/OB_AUTH/OB_EXIT/FC_CTR_VER 2 Hz.
+ *   RC_CHANNELS 5 Hz, NAMED_VALUE_INT 11 tên + NAMED_VALUE_FLOAT 4 tên 2 Hz.
  *   Theo sự kiện: COMMAND_ACK, AUTOPILOT_VERSION, STATUSTEXT (chuyển trạng
- *   thái OFFBOARD). Ước khoảng 9 KB/s, ~10 % băng thông 921600.
+ *   thái OFFBOARD). LOCAL_POSITION_NED và VFR_HUD ngừng từ 1.5.
  *
  * NHẬN:
  *   HEARTBEAT                      — theo dõi đường truyền còn sống
@@ -48,7 +48,7 @@
  * phiên bản trong tài liệu đó. Lệch hai chỗ này là Pi đọc sai hợp đồng.
  */
 #define MAV_CONTRACT_MAJOR  1
-#define MAV_CONTRACT_MINOR  4
+#define MAV_CONTRACT_MINOR  5
 
 /** Quá thời gian này không nhận được HEARTBEAT thì coi như mất máy tính nhúng. */
 #define MAV_LINK_TIMEOUT_MS  3000u
