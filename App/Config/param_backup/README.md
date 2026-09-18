@@ -1,7 +1,44 @@
-# Sao lưu bảng tham số — 2026-09-13
+# Sao lưu bảng tham số — 2026-09-13, cập nhật 2026-09-18
 
 Bản sao lưu bảng tham số trong flash, dùng để nạp lại khi cấu hình bị mất hoặc
 hỏng.
+
+## Bản mới nhất — 2026-09-18
+
+Đọc sau khi nạp firmware `b086514` (hợp đồng 1.7) và reset board. Bảng tham số
+**không đổi cấu trúc** so với 09-13 (`table_crc = 0x61D4CE56`, 167 tham số), nên
+mọi file dưới đây nạp được lên firmware hiện tại.
+
+| File | Nội dung |
+|---|---|
+| `2026-09-18_toan_bo.txt` | 167 tham số, lệnh `dump` — **cấu hình đang chạy trên drone** |
+| `2026-09-18_khac_mac_dinh.txt` | 10 tham số khác mặc định, lệnh `diff` |
+| `flash_o_A_seq13.srec` | Ô flash A, thô, 480 byte @ `0x081C0000`, `seq = 13` (mới nhất) |
+| `flash_o_B_seq12.srec` | Ô flash B, thô, 480 byte @ `0x081E0000`, `seq = 12` |
+
+Hai ô đều đúng CRC (`data_crc` A `0xCA64B907`, B `0x812633B3`), schema 8,
+`sizeof(param_storage_t) = 460`; `.srec` đã giải ngược và so từng byte với dữ liệu
+đọc qua SWD. Chỉ nạp `.srec` khi firmware có **đúng `table_crc = 0x61D4CE56`**
+(xem cảnh báo ở Cách 2).
+
+**Khác bản 09-13 (`hien_tai_toan_bo.txt`) ở 6 tham số** — đã lưu vào flash sau
+09-13 (seq 11 → 13), chưa ghi lại là đã kiểm chứng khi bay:
+
+| Tham số | 09-13 | 09-18 |
+|---|---|---|
+| `rate_pid_roll_ki` | 0.001 | 0.0001 |
+| `rate_pid_pitch_kp` | 0.0008 | 0.001 |
+| `rate_pid_pitch_ki` | 0.001 | 0.0001 |
+| `poshold_vel_kp` | 10 | 15 |
+| `poshold_vel_ki` | 1 | 2 |
+| `althold_climb_kp` | 0.25 | 0.3 |
+
+Bộ chỉnh này hỏng thì nạp `2026-09-18_toan_bo.txt`; muốn quay về bộ đã bay 09-13
+thì nạp `hien_tai_toan_bo.txt`.
+
+---
+
+*Phần dưới là bản gốc 2026-09-13.*
 
 ## Vì sao có thư mục này
 

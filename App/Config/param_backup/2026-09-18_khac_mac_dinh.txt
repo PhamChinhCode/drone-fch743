@@ -1,0 +1,16 @@
+# THAM SO KHAC MAC DINH 2026-09-18
+# Doc qua console COM4 (lenh `diff`) ngay 2026-09-18, sau khi reset board (RAM = cau hinh nap tu flash).
+# Firmware git b08651423f516cd9, hop dong 10700, 167 tham so, table_crc = 0x61D4CE56, seq da luu = 13.
+# Nap lai: .\nap_tham_so.ps1 -File 2026-09-18_khac_mac_dinh.txt  (xem README.md)
+#
+set rate_pid_roll_kp=0.0008
+set rate_pid_yaw_kp=0.0004
+set rate_pid_yaw_ki=0.005
+set angle_trim_roll_deg=0.7
+set angle_trim_pitch_deg=0.5
+set poshold_vel_kp=15
+set poshold_vel_ki=2
+set poshold_pos_kp=0.8
+set althold_climb_kp=0.3
+set flow_rad_per_count=0.002
+# het — go `save` de ghi flash
