@@ -1,6 +1,6 @@
 > **📌 BẢN SAO CHỈ ĐỌC — KHÔNG SỬA Ở ĐÂY.**
 > Bản gốc duy nhất: <https://github.com/PhamChinhCode/drone-ros2-jazzy/blob/main/docs/GIAO_UOC_FC_ROS2.md>
-> (mục 0.2). Sửa ở bản gốc rồi chép về đây. Đồng bộ lần cuối: 2026-09-18, bản làm việc hợp đồng 1.6 (chưa commit bên bản gốc).
+> (mục 0.2). Sửa ở bản gốc rồi chép về đây. Đồng bộ lần cuối: 2026-09-18, commit `7f41f2f`.
 
 # Giao ước FC ↔ ROS 2 — bản hợp nhất
 
