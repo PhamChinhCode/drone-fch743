@@ -36,6 +36,12 @@ Hai ô đều đúng CRC (`data_crc` A `0xCA64B907`, B `0x812633B3`), schema 8,
 Bộ chỉnh này hỏng thì nạp `2026-09-18_toan_bo.txt`; muốn quay về bộ đã bay 09-13
 thì nạp `hien_tai_toan_bo.txt`.
 
+**Cập nhật cùng ngày — CẤU HÌNH HIỆN HÀNH: `2026-09-18_rate_0913_toan_bo.txt`.**
+Theo yêu cầu, ba tham số rate đặt lại về 09-13 (`rate_pid_roll_ki` 0.001,
+`rate_pid_pitch_kp` 0.0008, `rate_pid_pitch_ki` 0.001), đã `save` (seq 14), reset
+rồi đọc lại: so với 09-13 chỉ còn khác `poshold_vel_kp` 15, `poshold_vel_ki` 2,
+`althold_climb_kp` 0.3. Hai file `.srec` seq 13/12 ở trên là bản TRƯỚC lần đặt lại này.
+
 ---
 
 *Phần dưới là bản gốc 2026-09-13.*
