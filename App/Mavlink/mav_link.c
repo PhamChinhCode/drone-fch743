@@ -603,7 +603,12 @@ static void send_autopilot_version(void)
  * Đặt 15 chứ không 17: MAVROS/ROS coi mẫu dưới min_range là không hợp lệ, và
  * nhiễu 1-2 cm lúc nằm đất sẽ làm mất mẫu đúng lúc cần nhất (chạm đất).
  */
-#define MAV_DIST_MIN_CM       15u
+/*
+ * 09-18: hạ 15 -> 10. Nằm đất laser đọc 0,10-0,14 m tuỳ chỗ đặt (không chỉ 17-19 cm như 09-13),
+ * dưới 15 thì Pi bỏ laser -> mất cả flow camera lẫn vz FC và EKF trôi. 10 cm khớp EST_RANGE_MIN_M:
+ * dưới đó là laser bị che (tay che đọc 0,05-0,10 m).
+ */
+#define MAV_DIST_MIN_CM       10u
 #define MAV_DIST_COVARIANCE   25u   /* cm², tức sigma 5 cm = EST_RANGE_NOISE_M */
 
 static void send_distance_sensor(uint32_t now_ms)
