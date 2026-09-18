@@ -1,7 +1,7 @@
-# BANG THAM SO 2026-09-18 SAU KHI DAT RATE VE 09-13 — toan bo 167 tham so (CAU HINH HIEN HANH)
-# rate_pid_roll_ki, rate_pid_pitch_kp, rate_pid_pitch_ki dat lai theo hien_tai_toan_bo.txt (09-13);
-# POSHOLD/ALTHOLD giu nhu 2026-09-18_toan_bo.txt. Doc qua console (`dump`) sau reset, seq da luu = 14.
-# Firmware git b08651423f516cd9, hop dong 10700, table_crc = 0x61D4CE56.
+# BANG THAM SO HIEN HANH 2026-09-18 (seq da luu = 16) — toan bo 167 tham so
+# Rate PID nhu 09-13; POSHOLD/ALTHOLD nhu 2026-09-18_toan_bo.txt; flow_rad_per_count = 0.0019
+# (chot khi dieu tra troi yaw, xem memory flow-poshold-yaw-drift). Doc qua console (`dump`).
+# table_crc = 0x61D4CE56.
 # Nap lai: .\nap_tham_so.ps1 -File 2026-09-18_rate_0913_toan_bo.txt  (xem README.md)
 #
 set rate_pid_roll_kp=0.0008
@@ -76,7 +76,7 @@ set mag_scale_y=0.9885
 set mag_scale_z=1.0257
 set baro_sea_level_pa=101325
 set baro_alt_lpf_hz=2
-set flow_rad_per_count=0.002
+set flow_rad_per_count=0.0019
 set est_gyro_noise_dps=0.05
 set est_gyro_bias_walk_dps=0.002
 set est_accel_noise_mps2=0.5

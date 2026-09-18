@@ -41,6 +41,8 @@ Theo yêu cầu, ba tham số rate đặt lại về 09-13 (`rate_pid_roll_ki` 0
 `rate_pid_pitch_kp` 0.0008, `rate_pid_pitch_ki` 0.001), đã `save` (seq 14), reset
 rồi đọc lại: so với 09-13 chỉ còn khác `poshold_vel_kp` 15, `poshold_vel_ki` 2,
 `althold_climb_kp` 0.3. Hai file `.srec` seq 13/12 ở trên là bản TRƯỚC lần đặt lại này.
+Sau đó `flow_rad_per_count` 0.002 → **0.0019** (điều tra trôi yaw, seq 16); file hiện hành
+đã đọc lại ở seq 16.
 
 ---
 

@@ -348,7 +348,15 @@ static void send_odometry(uint32_t now_ms)
     vel_cov[k_cov_diag[4]] = MAV_COV_UNKNOWN;
     vel_cov[k_cov_diag[5]] = MAV_COV_UNKNOWN;
 
-    const vec3f_t v_body = ekf_attitude_ned_to_body(g_fc.est.velocity_mps);
+    /*
+     * vn/ve không hợp lệ (mất flow, vd nằm đất < est_flow_min_height_m) thì bộ lọc vận tốc chỉ
+     * còn tích phân gia tốc và trôi tới vài m/s. Xoay nguyên vector sang hệ thân thì phần trôi đó
+     * LỌT vào vz (nghiêng 1-2 độ: vz +0,12 m/s khi nằm yên, đo 09-18) dù vz đang báo hợp lệ.
+     */
+    const vec3f_t v_ned = { vel_ok ? g_fc.est.velocity_mps.x : 0.0f,
+                            vel_ok ? g_fc.est.velocity_mps.y : 0.0f,
+                            g_fc.est.velocity_mps.z };
+    const vec3f_t v_body = ekf_attitude_ned_to_body(v_ned);
     const float q[4] = { g_fc.est.attitude_q.w, g_fc.est.attitude_q.x,
                          g_fc.est.attitude_q.y, g_fc.est.attitude_q.z };
 
