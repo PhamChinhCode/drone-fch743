@@ -52,7 +52,9 @@ void ekf_altitude_update_baro(float altitude_m);
 /**
  * Cập nhật bằng cảm biến khoảng cách laser.
  * Hàm tự chiếu số đo nghiêng xuống phương thẳng đứng và tự bỏ qua khi máy bay
- * nghiêng quá EST_RANGE_MAX_TILT_DEG hoặc đo xa quá EST_RANGE_MAX_M.
+ * nghiêng quá EST_RANGE_MAX_TILT_DEG (có trễ) hoặc đo ngoài [EST_RANGE_MIN_M, EST_RANGE_MAX_M] (dưới là bị che).
+ * Bỏ mẫu lệch dự đoán quá EST_RANGE_GATE_SIGMA; sau EST_RANGE_REANCHOR_MS không
+ * dùng được laser thì mẫu kế tiếp neo lại độ cao, không kéo theo tốc độ lên.
  *
  * @param range_m    khoảng cách đo được dọc trục thân, mét
  * @param tilt_cos   cosin góc nghiêng, lấy từ ekf_attitude_tilt_cos()

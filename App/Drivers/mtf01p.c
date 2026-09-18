@@ -99,6 +99,8 @@ static void handle_rangefinder(const uint8_t *payload, uint16_t size)
     msp_rangefinder_t m;
     memcpy(&m, payload, sizeof(m));
 
+    g_fc.flow.range_timestamp_us = micros();
+
     /*
      * Cảm biến trả số âm khi mục tiêu ngoài tầm. Giữ lại giá trị đo cuối cùng
      * nhưng hạ cờ range_valid, để tầng ước lượng biết mà không dùng số này.
@@ -326,10 +328,19 @@ uint8_t mtf01p_update(void)
         }
     }
 
-    /* Quá lâu không có gói hợp lệ thì hạ cờ khoẻ. */
-    if (fc_elapsed_us(micros(), g_fc.flow.timestamp_us)
+    /*
+     * Quá lâu không có gói hợp lệ thì hạ cờ. Hai luồng xét RIÊNG: trước đây
+     * range_valid chỉ hết hạn theo gói flow, nên luồng khoảng cách ngừng mà
+     * flow còn chạy thì range_mm cũ vẫn được coi là hợp lệ mãi.
+     */
+    const uint32_t now_us = micros();
+    if (fc_elapsed_us(now_us, g_fc.flow.timestamp_us)
             > (FLOW_RANGE_TIMEOUT_MS * 1000u)) {
         g_fc.flow.healthy     = false;
+        g_fc.flow.range_valid = false;
+    }
+    if (fc_elapsed_us(now_us, g_fc.flow.range_timestamp_us)
+            > (FLOW_RANGE_TIMEOUT_MS * 1000u)) {
         g_fc.flow.range_valid = false;
     }
 

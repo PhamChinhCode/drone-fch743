@@ -5,6 +5,7 @@
 
 #include "ekf_altitude.h"
 #include "param_table.h"
+#include "fc_time.h"
 
 /* Chỉ số trạng thái, đặt tên cho dễ đọc phần đại số bên dưới. */
 enum { ST_H = 0, ST_V = 1, ST_B = 2, ST_N = 3 };
@@ -12,6 +13,10 @@ enum { ST_H = 0, ST_V = 1, ST_B = 2, ST_N = 3 };
 static float s_x[ST_N];            /* [độ cao, tốc độ lên, bias accel] */
 static float s_P[ST_N][ST_N];
 static bool  s_valid;
+
+static bool     s_range_tilt_blocked;   /* đang ở phía "quá nghiêng" của vòng trễ */
+static bool     s_range_used_once;
+static uint32_t s_range_last_used_us;   /* lần gần nhất laser được DÙNG (cập nhật/neo) */
 
 /* ==========================================================================
  * Khởi tạo
@@ -31,6 +36,10 @@ void ekf_altitude_init(void)
     s_P[ST_B][ST_B] = 1.0f;
 
     s_valid = false;
+
+    s_range_tilt_blocked = false;
+    s_range_used_once    = false;
+    s_range_last_used_us = 0;
 }
 
 /* ==========================================================================
@@ -165,19 +174,54 @@ bool ekf_altitude_update_range(float range_m, float tilt_cos)
      * ngay dưới bụng — chiếu hình học không cứu được vì mặt đất bên đó có
      * thể cao thấp khác. Thà bỏ hẳn số đo còn hơn tin một con số sai.
      */
-    const float min_cos = cosf(g_params.est_range_max_tilt_deg * FC_DEG_TO_RAD);
-    if (tilt_cos < min_cos) {
+    const float max_tilt_deg = s_range_tilt_blocked
+                             ? g_params.est_range_max_tilt_deg - EST_RANGE_TILT_HYST_DEG
+                             : g_params.est_range_max_tilt_deg;
+    s_range_tilt_blocked = tilt_cos < cosf(max_tilt_deg * FC_DEG_TO_RAD);
+    if (s_range_tilt_blocked) {
         return false;
     }
 
-    if (range_m <= 0.0f || range_m > g_params.est_range_max_m) {
+    if (range_m < EST_RANGE_MIN_M || range_m > g_params.est_range_max_m) {
         return false;
     }
 
     /* Chiếu khoảng cách nghiêng xuống phương thẳng đứng. */
     const float height = range_m * tilt_cos;
+    const float r      = g_params.est_range_noise_m * g_params.est_range_noise_m;
+    const uint32_t now_us = micros();
 
-    update_height(height, g_params.est_range_noise_m * g_params.est_range_noise_m);
+    /*
+     * Laser vừa quay lại sau một quãng không dùng được: trong quãng đó độ cao
+     * chỉ bám baro và đã có thể lệch cả mét. Cập nhật Kalman thường sẽ kéo cả
+     * tốc độ lên theo cú nhảy (K[ST_V] lớn vì P đã nở) và vòng giữ độ cao giật
+     * theo. Neo thẳng độ cao về laser, bỏ tương quan của nó, giữ nguyên v và b.
+     */
+    if (!s_range_used_once ||
+        fc_elapsed_us(now_us, s_range_last_used_us) > EST_RANGE_REANCHOR_MS * 1000u) {
+        s_x[ST_H] = height;
+        s_P[ST_H][ST_H] = r;
+        s_P[ST_H][ST_V] = s_P[ST_V][ST_H] = 0.0f;
+        s_P[ST_H][ST_B] = s_P[ST_B][ST_H] = 0.0f;
+        s_valid              = true;
+        s_range_used_once    = true;
+        s_range_last_used_us = now_us;
+        return true;
+    }
+
+    /*
+     * Cổng phần dư: một mẫu lệch quá EST_RANGE_GATE_SIGMA thì bỏ. Lệch kéo dài
+     * (bay qua bậc/bàn, hoặc bộ lọc trôi) thì sau EST_RANGE_REANCHOR_MS sẽ rơi
+     * vào nhánh neo lại ở trên, nên cổng không thể khoá laser vĩnh viễn.
+     */
+    const float y = height - s_x[ST_H];
+    const float S = s_P[ST_H][ST_H] + r;
+    if (y * y > EST_RANGE_GATE_SIGMA * EST_RANGE_GATE_SIGMA * S) {
+        return false;
+    }
+
+    update_height(height, r);
+    s_range_last_used_us = now_us;
     return true;
 }
 

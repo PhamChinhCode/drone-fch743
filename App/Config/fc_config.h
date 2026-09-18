@@ -1200,6 +1200,18 @@
 #define EST_RANGE_NOISE_M 0.05f      /* laser chính xác hơn nhiều */
 #define EST_RANGE_MAX_TILT_DEG 25.0f /* nghiêng quá -> bỏ range */
 #define EST_RANGE_MAX_M 6.0f         /* quá xa -> tin baro hơn */
+/* Nằm đất laser đọc 0,145-0,23 m theo cách lắp, nên không bao giờ đo được thấp hơn. Tay/vật che
+ * sát mắt laser đọc 0,05-0,10 m (đo 09-18) và kéo độ cao về ~7 cm - lọt cổng phần dư vì chỉ lệch
+ * ~0,15 m. Dưới ngưỡng này là bị che, không phải độ cao. */
+#define EST_RANGE_MIN_M 0.10f
+/* Đã vượt EST_RANGE_MAX_TILT_DEG thì phải về dưới (ngưỡng - trễ) mới nhận lại laser,
+ * nếu không quanh ngưỡng laser bật/tắt từng mẫu và độ cao thành răng cưa laser/baro. */
+#define EST_RANGE_TILT_HYST_DEG 3.0f
+/* Mẫu laser lệch dự đoán quá chừng này sigma (của phần dư) thì bỏ: gai nhiễu, vật lướt qua. */
+#define EST_RANGE_GATE_SIGMA 5.0f
+/* Không dùng được laser liên tục quá lâu (mất tín hiệu, nghiêng, bị cổng loại) thì mẫu hợp
+ * lệ kế tiếp NEO LẠI độ cao thay vì cập nhật: không kéo tốc độ lên theo cú nhảy. */
+#define EST_RANGE_REANCHOR_MS 500u
 
 /* --- Ước lượng vận tốc ngang từ optical flow ----------------------------
  *

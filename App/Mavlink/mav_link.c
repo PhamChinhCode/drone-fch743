@@ -609,6 +609,12 @@ static void send_distance_sensor(uint32_t now_ms)
     uint8_t quality;
     if (!g_fc.flow.range_valid) {
         quality = 1u;
+        /*
+         * Hợp đồng 1.6: MAVROS bỏ qua signal_quality, và driver giữ range_mm là
+         * số đo HỢP LỆ CUỐI. Gửi nguyên số đó thì Pi thấy một độ cao đóng băng
+         * mà vẫn nằm trong [min, max]. 0 < min_distance nên Pi tự loại.
+         */
+        cur_cm = 0u;
     } else {
         quality = (uint8_t)(2u + ((uint32_t)g_fc.flow.range_quality * 98u) / 255u);
     }

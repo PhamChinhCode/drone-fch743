@@ -167,6 +167,7 @@ typedef struct {
     uint8_t  flow_quality;       /**< 0..255, càng cao càng tốt       */
     uint8_t  range_quality;
     bool     range_valid;
+    uint32_t range_timestamp_us; /**< gói khoảng cách gần nhất        */
 
     uint32_t timestamp_us;
     uint32_t sample_count;

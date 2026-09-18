@@ -216,9 +216,6 @@ bool estimator_update(uint32_t now_us)
         }
 
         /*
-        Last login: Sun Sep  6 21:48:29 2026 from 192.168.10.121
-pc@pi4ubuntu:~$
-
          * Cùng một gói MTF-01P mang cả khoảng cách lẫn optical flow, nên xử lý
          * luôn ở đây. dt lấy từ khoảng cách giữa hai mốc thời gian gói, không
          * lấy nhịp danh định — gói UART tới không đều.
@@ -232,9 +229,9 @@ pc@pi4ubuntu:~$
             const float fx = (float)g_fc.flow.flow_x_raw * g_params.flow_rad_per_count;
             const float fy = (float)g_fc.flow.flow_y_raw * g_params.flow_rad_per_count;
 
-            (void)(fx, fy, g_fc.imu.gyro_dps, fdt,
-                   range_m, ekf_attitude_tilt_cos(),
-                   g_fc.flow.flow_quality);
+            (void)ekf_velocity_update_flow(fx, fy, g_fc.imu.gyro_dps, fdt,
+                                           range_m, ekf_attitude_tilt_cos(),
+                                           g_fc.flow.flow_quality);
         }
         s_flow_started = true;
     }
