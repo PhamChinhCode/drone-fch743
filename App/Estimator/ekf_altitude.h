@@ -75,4 +75,10 @@ float ekf_altitude_climb_uncertainty_mps(void);
 /** true khi đã có ít nhất một lần cập nhật từ cảm biến tuyệt đối. */
 bool ekf_altitude_is_valid(void);
 
+/**
+ * true nếu laser được DÙNG (cập nhật hoặc neo lại) trong max_ms vừa qua. Không có laser thì độ
+ * cao chỉ còn baro + gia tốc: trôi tới ~0,9 m/s khi nghiêng nhiều mà P vẫn nhỏ (đo 09-18).
+ */
+bool ekf_altitude_range_recent(uint32_t max_ms);
+
 #endif /* EKF_ALTITUDE_H */

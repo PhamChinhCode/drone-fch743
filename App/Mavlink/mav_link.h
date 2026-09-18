@@ -48,7 +48,7 @@
  * phiên bản trong tài liệu đó. Lệch hai chỗ này là Pi đọc sai hợp đồng.
  */
 #define MAV_CONTRACT_MAJOR  1
-#define MAV_CONTRACT_MINOR  6
+#define MAV_CONTRACT_MINOR  7
 
 /** Quá thời gian này không nhận được HEARTBEAT thì coi như mất máy tính nhúng. */
 #define MAV_LINK_TIMEOUT_MS  3000u

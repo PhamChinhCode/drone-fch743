@@ -1212,6 +1212,10 @@
 /* Không dùng được laser liên tục quá lâu (mất tín hiệu, nghiêng, bị cổng loại) thì mẫu hợp
  * lệ kế tiếp NEO LẠI độ cao thay vì cập nhật: không kéo tốc độ lên theo cú nhảy. */
 #define EST_RANGE_REANCHOR_MS 500u
+/* Lúc neo lại: v đặt 0 với phương sai này ((m/s)^2, sigma 1 m/s), bias accel nới tối thiểu tới
+ * ((m/s^2)^2, sigma 0,3) - để laser dựng lại được cả hai thay vì tin giá trị đã trôi. */
+#define EST_RANGE_REANCHOR_VEL_VAR  1.0f
+#define EST_RANGE_REANCHOR_BIAS_VAR 0.09f
 
 /* --- Ước lượng vận tốc ngang từ optical flow ----------------------------
  *

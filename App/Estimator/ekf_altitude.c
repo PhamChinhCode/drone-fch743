@@ -195,14 +195,26 @@ bool ekf_altitude_update_range(float range_m, float tilt_cos)
      * Laser vừa quay lại sau một quãng không dùng được: trong quãng đó độ cao
      * chỉ bám baro và đã có thể lệch cả mét. Cập nhật Kalman thường sẽ kéo cả
      * tốc độ lên theo cú nhảy (K[ST_V] lớn vì P đã nở) và vòng giữ độ cao giật
-     * theo. Neo thẳng độ cao về laser, bỏ tương quan của nó, giữ nguyên v và b.
+     * theo. Neo thẳng độ cao về laser.
+     *
+     * v CŨNG PHẢI coi là KHÔNG BIẾT: quãng mất laser chính là lúc v trôi (đo 09-18
+     * khi cầm tay nghiêng > 25 độ: v tới -3 m/s). Giữ v cũ với P_vv nhỏ và xoá
+     * P_hv thì K[ST_V] ~ 0 - laser chỉ kéo h, không sửa được v; v sai làm h trôi,
+     * cổng phần dư chặn, 0,5 s sau lại neo h... vòng lặp khoá v ở -10 m/s ngay cả
+     * khi nằm yên trên bàn. Đặt v = 0 với P_vv lớn để vài mẫu laser kế tiếp dựng
+     * lại v, và nới P_bb vì bias cũng có thể đã bị kéo lệch trong quãng đó.
      */
     if (!s_range_used_once ||
         fc_elapsed_us(now_us, s_range_last_used_us) > EST_RANGE_REANCHOR_MS * 1000u) {
         s_x[ST_H] = height;
+        s_x[ST_V] = 0.0f;
+        for (int i = 0; i < ST_N; i++) {
+            s_P[ST_H][i] = s_P[i][ST_H] = 0.0f;
+            s_P[ST_V][i] = s_P[i][ST_V] = 0.0f;
+        }
         s_P[ST_H][ST_H] = r;
-        s_P[ST_H][ST_V] = s_P[ST_V][ST_H] = 0.0f;
-        s_P[ST_H][ST_B] = s_P[ST_B][ST_H] = 0.0f;
+        s_P[ST_V][ST_V] = EST_RANGE_REANCHOR_VEL_VAR;
+        s_P[ST_B][ST_B] = fmaxf(s_P[ST_B][ST_B], EST_RANGE_REANCHOR_BIAS_VAR);
         s_valid              = true;
         s_range_used_once    = true;
         s_range_last_used_us = now_us;
@@ -233,6 +245,12 @@ float ekf_altitude_m(void)              { return s_x[ST_H]; }
 float ekf_altitude_climb_rate_mps(void) { return s_x[ST_V]; }
 float ekf_altitude_accel_bias(void)     { return s_x[ST_B]; }
 bool  ekf_altitude_is_valid(void)       { return s_valid; }
+
+bool ekf_altitude_range_recent(uint32_t max_ms)
+{
+    return s_range_used_once &&
+           fc_elapsed_us(micros(), s_range_last_used_us) <= max_ms * 1000u;
+}
 
 float ekf_altitude_uncertainty_m(void)
 {

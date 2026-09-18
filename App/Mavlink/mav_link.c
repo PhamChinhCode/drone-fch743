@@ -280,6 +280,8 @@ static void send_global_position_int(uint32_t now_ms)
  * Mất flow rồi có lại thì vị trí được GIỮ, không đặt lại.
  */
 #define MAV_COV_UNKNOWN   1.0e6f
+/* Laser không được dùng quá lâu hơn chừng này thì z/vz của ODOMETRY là "đừng dùng". Laser ~100 Hz. */
+#define MAV_ODOM_RANGE_MAX_AGE_MS 300u
 #define MAV_ODOM_ATT_VAR  ((1.0f * FC_DEG_TO_RAD) * (1.0f * FC_DEG_TO_RAD))  /* (1°)², mục 8.4 */
 
 static const uint8_t k_cov_diag[6] = { 0u, 6u, 11u, 15u, 18u, 20u };
@@ -319,8 +321,15 @@ static void send_odometry(uint32_t now_ms)
         pose_cov[k_cov_diag[0]] = MAV_COV_UNKNOWN;
         pose_cov[k_cov_diag[1]] = MAV_COV_UNKNOWN;
     }
+    /*
+     * Hợp đồng 1.7: z và vz chỉ hợp lệ khi laser vừa được DÙNG. Thiếu laser (nghiêng > 25 độ,
+     * ngoài tầm, bị che) độ cao chỉ còn baro + gia tốc, trôi tới ~0,9 m/s mà P vẫn báo sigma
+     * ~0,06 m/s - EKF Pi tin theo và z lao xuống -1,9 m khi cầm tay nghiêng (đo 09-18).
+     */
+    const bool z_ok = g_fc.est.altitude_valid &&
+                      ekf_altitude_range_recent(MAV_ODOM_RANGE_MAX_AGE_MS);
     const float sig_h = ekf_altitude_uncertainty_m();
-    pose_cov[k_cov_diag[2]] = g_fc.est.altitude_valid ? sig_h * sig_h : MAV_COV_UNKNOWN;
+    pose_cov[k_cov_diag[2]] = z_ok ? sig_h * sig_h : MAV_COV_UNKNOWN;
     pose_cov[k_cov_diag[3]] = MAV_ODOM_ATT_VAR;
     pose_cov[k_cov_diag[4]] = MAV_ODOM_ATT_VAR;
     pose_cov[k_cov_diag[5]] = MAV_COV_UNKNOWN;       /* yaw: chờ kiểm chứng từ kế (10.6a) */
@@ -334,7 +343,7 @@ static void send_odometry(uint32_t now_ms)
     const float sig_vz = ekf_altitude_climb_uncertainty_mps();
     vel_cov[k_cov_diag[0]] = vel_ok ? sig_v * sig_v : MAV_COV_UNKNOWN;
     vel_cov[k_cov_diag[1]] = vel_ok ? sig_v * sig_v : MAV_COV_UNKNOWN;
-    vel_cov[k_cov_diag[2]] = g_fc.est.altitude_valid ? sig_vz * sig_vz : MAV_COV_UNKNOWN;
+    vel_cov[k_cov_diag[2]] = z_ok ? sig_vz * sig_vz : MAV_COV_UNKNOWN;
     vel_cov[k_cov_diag[3]] = MAV_COV_UNKNOWN;        /* tốc độ góc: chưa có số đo sai số */
     vel_cov[k_cov_diag[4]] = MAV_COV_UNKNOWN;
     vel_cov[k_cov_diag[5]] = MAV_COV_UNKNOWN;
