@@ -669,7 +669,7 @@ static void emit_header(void)
         wr_str(&w, "     sum_x      sum_y |   fx   fy | qual | range_m | rad_per_count hien tai");
         break;
     case DBG_MODE_VEL:
-        wr_str(&w, "     wx      gx   tong |     wy      gy   tong |  vb_x   vb_y | range_m | qual |  bo | tuoi | tin");
+        wr_str(&w, "     wx      gx   tong |     wy      gy   tong |  vb_x   vb_y | range_m | qual |  bo | tuoi | tin |    gz |  ek_f  ek_r |   b_f    b_r");
         break;
     case DBG_MODE_POSHOLD:
         wr_str(&w, "  v_fwd  v_rgt |  t_fwd  t_rgt |   I_x   I_y |     dN     dE | giu |  tgt_r  tgt_p | che do");
@@ -1479,6 +1479,33 @@ static void emit_vel(void)
         }
         wr_str(&w, " |");
         wr_str_pad(&w, ekf_velocity_is_valid() ? " co" : " HET", 5);
+    }
+
+    /* Toc do yaw (rad/s), de khop vb_y voi gz khi kiem bu canh tay don. */
+    wr_str(&w, " |");
+    wr_fix(&w, g_fc.imu.gyro_dps.z * FC_DEG_TO_RAD, 2, 6);
+
+    /*
+     * Van toc SAU EKF va bias gia toc, cung quy ve he THAN theo yaw hien tai.
+     * So voi vb_x/vb_y (flow tho) de biet sai so sinh ra o phia gia toc ke:
+     * quay yaw tai cho ma ek_* lech con vb_* khong -> loi o EKF.
+     */
+    {
+        const float yaw = g_fc.est.attitude_rad.yaw;
+        const float cy  = cosf(yaw);
+        const float sy  = sinf(yaw);
+        const float vn  = g_fc.est.velocity_mps.x;
+        const float ve  = g_fc.est.velocity_mps.y;
+        float bn, be;
+
+        ekf_velocity_bias_ne(&bn, &be);
+
+        wr_str(&w, " |");
+        wr_fix(&w,  vn * cy + ve * sy, 2, 6);
+        wr_fix(&w, -vn * sy + ve * cy, 2, 6);
+        wr_str(&w, " |");
+        wr_fix(&w,  bn * cy + be * sy, 3, 7);
+        wr_fix(&w, -bn * sy + be * cy, 3, 7);
     }
     wr_eol(&w);
     (void)tx_push(line, w.len);

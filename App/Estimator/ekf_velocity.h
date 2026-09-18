@@ -103,6 +103,9 @@ float ekf_velocity_uncertainty_mps(void);
  */
 void ekf_velocity_debug_rates(float *wx, float *wy, float *gx, float *gy);
 
+/** Bias gia tốc đang ước lượng theo trục Bắc / Đông, m/s². */
+void ekf_velocity_bias_ne(float *bn, float *be);
+
 /** true khi đã có ít nhất một mẫu flow hợp lệ gần đây. */
 /**
  * true khi uoc luong van toc con dung duoc.

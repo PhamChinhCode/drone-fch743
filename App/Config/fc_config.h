@@ -1131,6 +1131,21 @@
  *   một phép đảo khôi phục đúng cả hai số hạng của công thức bù.
  */
 
+/*
+ * Vị trí cảm biến flow so với TÂM máy bay, hệ thân X trước / Y phải / Z xuống.
+ * ĐÃ ĐO: lùi về đuôi 67 mm, thấp hơn tâm 19 mm, nằm đúng đường giữa.
+ *
+ * Flow đo vận tốc của chính điểm đặt cảm biến, mà điểm đó cách tâm nên máy
+ * bay quay tại chỗ cũng kéo nó đi: v_cảm_biến = v_tâm + ω × r. Yaw 1 rad/s
+ * quét đuôi sang ngang 6,7 cm/s, pitch 1 rad/s đẩy cảm biến tới/lui 1,9 cm/s
+ * — không trừ đi thì bộ giữ vị trí đuổi theo vận tốc ảo mỗi lần máy quay.
+ *
+ * Để là #define chứ không phải param: thêm param đổi table_crc, và khối
+ * param đã lưu trong flash sẽ bị coi là "khac-firmware" rồi nạp mặc định.
+ */
+#define FLOW_OFFSET_X_M (-0.067f)
+#define FLOW_OFFSET_Z_M (0.019f)
+
 /* ==========================================================================
  * Bộ ước lượng EKF
  *

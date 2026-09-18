@@ -215,8 +215,19 @@ bool ekf_velocity_update_flow(float flow_x_rad, float flow_y_rad,
      * dư đúng bằng 2 lần tốc độ quay. Nghiêng tay ~110 °/s ở độ cao 0,8 m sẽ
      * cho vận tốc ảo ±3 m/s, và bộ giữ vị trí sẽ tự kích ngay lập tức.
      */
-    const float vy_body =  h * (wx + gx);
-    const float vx_body = -h * (wy + gy);
+    /*
+     * --- BÙ CÁNH TAY ĐÒN ---
+     * Số trên là vận tốc của ĐIỂM ĐẶT cảm biến. Trừ ω × r để ra vận tốc của
+     * tâm máy bay (r = (FLOW_OFFSET_X_M, 0, FLOW_OFFSET_Z_M), r_y = 0):
+     *     (ω × r)_x = gy·r_z
+     *     (ω × r)_y = gz·r_x − gx·r_z
+     * Kiểm dấu: ngóc mũi (gy > 0) thì điểm dưới tâm đi TỚI; mũi quay phải
+     * (gz > 0) thì đuôi quét sang TRÁI.
+     */
+    const float gz = gyro_dps.z * FC_DEG_TO_RAD;
+
+    const float vy_body =  h * (wx + gx) - (gz * FLOW_OFFSET_X_M - gx * FLOW_OFFSET_Z_M);
+    const float vx_body = -h * (wy + gy) - gy * FLOW_OFFSET_Z_M;
 
     s_body_meas = (vec3f_t){ vx_body, vy_body, 0.0f };
     s_dbg_wx = wx;  s_dbg_wy = wy;
@@ -303,6 +314,12 @@ uint32_t ekf_velocity_age_ms(void)
 }
 uint32_t ekf_velocity_accepted(void)    { return s_accepted; }
 uint32_t ekf_velocity_rejected(void)    { return s_rejected; }
+
+void ekf_velocity_bias_ne(float *bn, float *be)
+{
+    *bn = s_n.x[1];
+    *be = s_e.x[1];
+}
 
 void ekf_velocity_debug_rates(float *wx, float *wy, float *gx, float *gy)
 {
