@@ -125,7 +125,7 @@ typedef enum {
 /*  Dữ liệu cảm biến thô / đã hiệu chỉnh                                      */
 /* ========================================================================== */
 
-/** ICM20602 qua SPI1, đồng bộ theo chân DRDY trên PC4 (EXTI4). */
+/** IMU chính (ICM-42688-P) qua SPI1, đồng bộ theo chân DRDY trên PC4 (EXTI4). */
 typedef struct {
     vec3i16_t gyro_raw;          /**< giá trị ADC thô từ cảm biến     */
     vec3i16_t accel_raw;
@@ -218,6 +218,42 @@ typedef struct {
     bool      healthy;
 } mag_data_t;
 
+/**
+ * GPS qua UART7 — một gói UBX-NAV-PVT mỗi chu kỳ đo.
+ *
+ * healthy nói "module còn gửi NAV-PVT", KHÔNG nói "đã có fix". Muốn dùng vị
+ * trí thì phải xét thêm fix_ok, fix_type và h_acc_m.
+ */
+typedef struct {
+    int32_t  lat_e7;             /**< vĩ độ, độ x 1e7                 */
+    int32_t  lon_e7;             /**< kinh độ, độ x 1e7               */
+    int32_t  alt_msl_mm;         /**< độ cao so với mực nước biển     */
+    int32_t  alt_ellipsoid_mm;   /**< độ cao so với ellipsoid WGS84   */
+    vec3f_t  vel_ned_mps;        /**< vận tốc hệ NED                  */
+    float    ground_speed_mps;
+    float    course_deg;         /**< hướng chuyển động 0..360        */
+    float    h_acc_m;            /**< sai số ước lượng ngang, 1-sigma */
+    float    v_acc_m;
+    float    s_acc_mps;          /**< sai số ước lượng vận tốc        */
+    float    course_acc_deg;
+    uint16_t pdop_x100;
+    uint8_t  fix_type;           /**< 0 không, 2 = 2D, 3 = 3D (UBX)   */
+    uint8_t  num_sv;             /**< số vệ tinh dùng trong nghiệm    */
+    uint8_t  carr_soln;          /**< 0 không, 1 RTK float, 2 RTK fixed */
+    bool     fix_ok;             /**< cờ gnssFixOK của module         */
+    bool     diff_soln;          /**< đang dùng hiệu chỉnh vi sai     */
+
+    uint32_t itow_ms;            /**< GPS time of week                */
+    uint16_t utc_year;
+    uint8_t  utc_month, utc_day, utc_hour, utc_min, utc_sec;
+    bool     utc_valid;
+
+    uint32_t timestamp_us;       /**< lúc parse xong gói NAV-PVT      */
+    uint32_t sample_count;
+    uint16_t error_count;
+    bool     healthy;
+} gps_data_t;
+
 /** Đo pin qua ADC1 (PC1 = điện áp, PC0 = dòng điện). */
 typedef struct {
     uint16_t vbat_adc_raw;
@@ -246,6 +282,7 @@ typedef struct {
     vec3f_t  position_m;         /**< vị trí hệ NED (gốc lúc arm)     */
     float    altitude_m;         /**< độ cao hợp nhất baro + range    */
     float    climb_rate_mps;
+    float    altitude_reset_sum_m; /**< tổng Δh do neo lại laser; đổi = dời mốc */
 
     bool     attitude_valid;
     bool     altitude_valid;
@@ -355,6 +392,9 @@ typedef struct {
 
     /* Tu ke QMC6309 sau sensor hub cua LSM6DSV. */
     mag_data_t       mag;
+
+    /* GPS MG-F10-A tren UART7. */
+    gps_data_t       gps;
 
 } fc_t;
 

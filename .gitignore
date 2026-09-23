@@ -87,3 +87,16 @@ uart*.log
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# --- Log bay va du lieu do (them 2026-09-23) --------------------------------
+#
+# Log/ la DU LIEU, khong phai ma nguon: CSV blackbox 15-50 MB moi chuyen, cong
+# them .npy cua cac script phan tich. 125 MB tinh toi 09-23. Sao luu rieng.
+/Log/
+*.csv
+*.npy
+
+# Ban sao du phong tu tay (vd STM32H743XX_FLASH.ld.bak_20260921) — ban goc da
+# nam trong lich su git roi.
+*.bak
+*.bak_*

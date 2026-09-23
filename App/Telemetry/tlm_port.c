@@ -158,7 +158,20 @@ bool tlm_port_write(const uint8_t *data, uint16_t len)
 static void tx_kick(void)
 {
     if (s_tx_busy) {
-        return;
+        /*
+         * USB bi rut / enumerate lai giua luc gui thi TransmitCplt khong bao
+         * gio toi, va duong truyen ket o busy mai mai. TxState da ve 0 ma van
+         * busy chi co the la truong hop do: ngat hoan tat chay tron trong mot
+         * lan ngat (TxState = 0 roi goi TransmitCplt), con ham nay chay khi
+         * da khoa ngat nen khong the chen vao giua hai buoc ay.
+         */
+        if (s_port == TLM_PORT_USB && CDC_TxIdle_FS()) {
+            s_tx_tail     = (uint16_t)((s_tx_tail + s_tx_inflight) % TLM_TX_BUFFER_SIZE);
+            s_tx_inflight = 0;
+            s_tx_busy     = false;
+        } else {
+            return;
+        }
     }
 
     const uint16_t head = s_tx_head;
@@ -179,16 +192,18 @@ static void tx_kick(void)
     if (s_port == TLM_PORT_UART) {
         st = HAL_UART_Transmit_DMA(&TLM_UART, &s_tx_buf[tail], chunk);
     } else if (s_port == TLM_PORT_USB) {
-        /* CDC_Transmit_FS chép sang đệm riêng của USB nên trả về ngay. */
+        /*
+         * CDC_Transmit_FS KHONG chep du lieu: SetTxBuffer chi luu con tro, va
+         * USB doc thang s_tx_buf trong suot luc gui. Nen giu nguyen busy va
+         * inflight cho toi CDC_TransmitCplt_FS -> tlm_port_usb_tx_complete_isr.
+         *
+         * Truoc day o day don tail ngay lap tuc, tuc giai phong vung USB con
+         * dang doc; dong moi ghi de len do. Trieu chung do duoc o 'flash dump'
+         * 500 Hz: mat tron 4 dong lien nhau va thay vao la ban sao cua dong
+         * toi sau, trong khi du lieu tren chip flash van dung.
+         */
         st = (CDC_Transmit_FS(&s_tx_buf[tail], chunk) == USBD_OK)
            ? HAL_OK : HAL_BUSY;
-        if (st == HAL_OK) {
-            /* USB không có callback hoàn tất ở đây, coi như xong ngay. */
-            s_tx_tail     = (uint16_t)((tail + chunk) % TLM_TX_BUFFER_SIZE);
-            s_tx_inflight = 0;
-            s_tx_busy     = false;
-            return;
-        }
     }
 
     if (st != HAL_OK) {
@@ -212,6 +227,14 @@ void tlm_port_tx_complete_isr(void)
     s_tx_busy     = false;
 
     tx_kick();                               /* nạp tiếp phần còn lại */
+}
+
+void tlm_port_usb_tx_complete_isr(void)
+{
+    /* Gói IN có thể là của lần trước khi đổi sang UART — khi đó không đụng. */
+    if (s_port == TLM_PORT_USB && s_tx_busy) {
+        tlm_port_tx_complete_isr();
+    }
 }
 
 /* ==========================================================================

@@ -321,11 +321,21 @@ static int8_t CDC_TransmitCplt_FS(uint8_t *Buf, uint32_t *Len, uint8_t epnum)
   UNUSED(Buf);
   UNUSED(Len);
   UNUSED(epnum);
+  /*
+   * USB doc THANG tu dem cua tlm_port trong luc gui (SetTxBuffer chi luu con
+   * tro). Chi toi day vung do moi duoc phep ghi de.
+   */
+  tlm_port_usb_tx_complete_isr();
   /* USER CODE END 13 */
   return result;
 }
 
 /* USER CODE BEGIN PRIVATE_FUNCTIONS_IMPLEMENTATION */
+uint8_t CDC_TxIdle_FS(void)
+{
+  USBD_CDC_HandleTypeDef *hcdc = (USBD_CDC_HandleTypeDef*)hUsbDeviceFS.pClassData;
+  return (hcdc == NULL || hcdc->TxState == 0U) ? 1U : 0U;
+}
 
 /* USER CODE END PRIVATE_FUNCTIONS_IMPLEMENTATION */
 

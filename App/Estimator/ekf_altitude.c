@@ -18,6 +18,10 @@ static bool     s_range_tilt_blocked;   /* đang ở phía "quá nghiêng" của
 static bool     s_range_used_once;
 static uint32_t s_range_last_used_us;   /* lần gần nhất laser được DÙNG (cập nhật/neo) */
 
+static float    s_step_ref;             /* mức laser ứng viên, trung bình chạy */
+static uint8_t  s_step_n;               /* số mẫu liên tiếp nằm quanh mức đó   */
+static float    s_reset_sum_m;          /* tổng các lần dời độ cao do neo lại  */
+
 /* ==========================================================================
  * Khởi tạo
  * ========================================================================== */
@@ -40,6 +44,9 @@ void ekf_altitude_init(void)
     s_range_tilt_blocked = false;
     s_range_used_once    = false;
     s_range_last_used_us = 0;
+
+    s_step_n      = 0;
+    s_reset_sum_m = 0.0f;
 }
 
 /* ==========================================================================
@@ -204,9 +211,57 @@ bool ekf_altitude_update_range(float range_m, float tilt_cos)
      * khi nằm yên trên bàn. Đặt v = 0 với P_vv lớn để vài mẫu laser kế tiếp dựng
      * lại v, và nới P_bb vì bias cũng có thể đã bị kéo lệch trong quãng đó.
      */
-    if (!s_range_used_once ||
-        fc_elapsed_us(now_us, s_range_last_used_us) > EST_RANGE_REANCHOR_MS * 1000u) {
-        s_x[ST_H] = height;
+    const bool lost = !s_range_used_once ||
+        fc_elapsed_us(now_us, s_range_last_used_us) > EST_RANGE_REANCHOR_MS * 1000u;
+
+    /*
+     * Cổng phần dư: lệch quá EST_RANGE_GATE_SIGMA sigma HOẶC quá EST_RANGE_STEP_M
+     * mét thì không cập nhật. Ngưỡng mét là bắt buộc: ngay sau khi dựng lại, P
+     * nở nhanh và một mẫu lệch cả nửa mét vẫn lọt cổng sigma với K lớn.
+     */
+    const float y = height - s_x[ST_H];
+    const float S = s_P[ST_H][ST_H] + r;
+    const bool jump = (fabsf(y) > EST_RANGE_STEP_M) ||
+                      (y * y > EST_RANGE_GATE_SIGMA * EST_RANGE_GATE_SIGMA * S);
+
+    if (!lost && !jump) {
+        s_step_n = 0;
+        update_height(height, r);
+        s_range_last_used_us = now_us;
+        return true;
+    }
+
+    /*
+     * Ứng viên mức mới (bậc địa hình, laser vừa quay lại, hoặc gai). Chỉ tin khi
+     * laser ỔN ĐỊNH ở đó EST_RANGE_STEP_N mẫu liền — gai lẻ bị bỏ, và kéo dài
+     * thì không khoá laser vĩnh viễn.
+     */
+    if (s_step_n == 0 || fabsf(height - s_step_ref) > EST_RANGE_STEP_TOL_M) {
+        s_step_ref = height;
+        s_step_n   = 1;
+        return false;
+    }
+    s_step_n++;
+    s_step_ref += (height - s_step_ref) / (float)s_step_n;
+    if (s_step_n < EST_RANGE_STEP_N) {
+        return false;
+    }
+
+    /*
+     * NEO LẠI. Δh công bố ra ngoài để vòng giữ độ cao dời mốc theo: với nó đây
+     * là đổi GỐC đo, không phải máy bay vừa lên/xuống.
+     */
+    s_reset_sum_m += s_step_ref - s_x[ST_H];
+    s_x[ST_H]      = s_step_ref;
+
+    if (lost) {
+        /*
+         * Mất laser lâu: v CŨNG PHẢI coi là KHÔNG BIẾT. Quãng mất laser chính là
+         * lúc v trôi (đo 09-18 khi cầm tay nghiêng > 25 độ: v tới -3 m/s). Giữ v
+         * cũ với P_vv nhỏ và xoá P_hv thì laser không sửa được v; v sai làm h
+         * trôi, cổng chặn, lại neo... vòng lặp khoá v ở -10 m/s ngay cả khi nằm
+         * yên trên bàn. Đặt v = 0 với P_vv lớn để laser dựng lại v, và nới P_bb.
+         */
         s_x[ST_V] = 0.0f;
         for (int i = 0; i < ST_N; i++) {
             s_P[ST_H][i] = s_P[i][ST_H] = 0.0f;
@@ -215,24 +270,12 @@ bool ekf_altitude_update_range(float range_m, float tilt_cos)
         s_P[ST_H][ST_H] = r;
         s_P[ST_V][ST_V] = EST_RANGE_REANCHOR_VEL_VAR;
         s_P[ST_B][ST_B] = fmaxf(s_P[ST_B][ST_B], EST_RANGE_REANCHOR_BIAS_VAR);
-        s_valid              = true;
-        s_range_used_once    = true;
-        s_range_last_used_us = now_us;
-        return true;
     }
+    /* Bậc địa hình khi laser vẫn chạy: chỉ dời h, v và P vẫn đúng nên giữ nguyên. */
 
-    /*
-     * Cổng phần dư: một mẫu lệch quá EST_RANGE_GATE_SIGMA thì bỏ. Lệch kéo dài
-     * (bay qua bậc/bàn, hoặc bộ lọc trôi) thì sau EST_RANGE_REANCHOR_MS sẽ rơi
-     * vào nhánh neo lại ở trên, nên cổng không thể khoá laser vĩnh viễn.
-     */
-    const float y = height - s_x[ST_H];
-    const float S = s_P[ST_H][ST_H] + r;
-    if (y * y > EST_RANGE_GATE_SIGMA * EST_RANGE_GATE_SIGMA * S) {
-        return false;
-    }
-
-    update_height(height, r);
+    s_step_n             = 0;
+    s_valid              = true;
+    s_range_used_once    = true;
     s_range_last_used_us = now_us;
     return true;
 }
@@ -245,6 +288,7 @@ float ekf_altitude_m(void)              { return s_x[ST_H]; }
 float ekf_altitude_climb_rate_mps(void) { return s_x[ST_V]; }
 float ekf_altitude_accel_bias(void)     { return s_x[ST_B]; }
 bool  ekf_altitude_is_valid(void)       { return s_valid; }
+float ekf_altitude_reset_sum_m(void)    { return s_reset_sum_m; }
 
 bool ekf_altitude_range_recent(uint32_t max_ms)
 {

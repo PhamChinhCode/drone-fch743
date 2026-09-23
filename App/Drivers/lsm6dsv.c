@@ -1346,10 +1346,14 @@ bool lsm6dsv_mag_update(uint32_t now_us)
      * Giai đoạn 4 mới đo bộ số này; tới lúc đó offset = 0 và scale = 1 nên
      * hai dòng dưới không đổi gì.
      */
+    /* cal = S (raw - offset), cung cong thuc voi mag_i2c.c (mag_soft_* 2026-09-22). */
+    const float dx = sensor_g.x - g_params.mag_offset_x_g;
+    const float dy = sensor_g.y - g_params.mag_offset_y_g;
+    const float dz = sensor_g.z - g_params.mag_offset_z_g;
     const float cal[3] = {
-        (sensor_g.x - g_params.mag_offset_x_g) * g_params.mag_scale_x,
-        (sensor_g.y - g_params.mag_offset_y_g) * g_params.mag_scale_y,
-        (sensor_g.z - g_params.mag_offset_z_g) * g_params.mag_scale_z
+        g_params.mag_scale_x * dx + g_params.mag_soft_xy * dy + g_params.mag_soft_xz * dz,
+        g_params.mag_soft_xy * dx + g_params.mag_scale_y * dy + g_params.mag_soft_yz * dz,
+        g_params.mag_soft_xz * dx + g_params.mag_soft_yz * dy + g_params.mag_scale_z * dz
     };
 
     /* --- Rồi mới xoay sang hệ thân --- */

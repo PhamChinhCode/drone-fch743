@@ -225,6 +225,12 @@ bool ctrl_rate_update(void)
      */
     const bool saturated = mixer_saturated();
 
+    /* --- TPA: giảm P/D roll-pitch khi ga cao, xem RATE_TPA_BREAKPOINT --- */
+    const float tpa_over = fc_constrainf(
+        (g_fc.ctrl.throttle_cmd - RATE_TPA_BREAKPOINT) / (1.0f - RATE_TPA_BREAKPOINT),
+        0.0f, 1.0f);
+    const float tpa = 1.0f - RATE_TPA_RATE * tpa_over;
+
     vec3f_t out;
     float  *out_axis[AXIS_COUNT] = { &out.x, &out.y, &out.z };
 
@@ -233,9 +239,10 @@ bool ctrl_rate_update(void)
         const pid_gains_t *g = &p->gains;
 
         const float error = sp[i] - meas[i];
+        const float atten = (i == AXIS_YAW) ? 1.0f : tpa;
 
         /* --- P --- */
-        const float p_term = g->kp * error;
+        const float p_term = g->kp * atten * error;
 
         /* --- I --- */
         if (!saturated) {
@@ -262,7 +269,7 @@ bool ctrl_rate_update(void)
 
         /* Lọc trước khi nhân hệ số — đạo hàm thô gần như toàn nhiễu. */
         s_dterm[i] = fc_lpf(s_dterm[i], raw_d, s_dterm_alpha);
-        const float d_term = g->kd * s_dterm[i];
+        const float d_term = g->kd * atten * s_dterm[i];
 
         p->derivative = s_dterm[i];
         p->output     = fc_constrainf(p_term + p->integral + d_term,

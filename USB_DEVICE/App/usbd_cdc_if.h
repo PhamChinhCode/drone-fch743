@@ -109,6 +109,8 @@ extern USBD_CDC_ItfTypeDef USBD_Interface_fops_FS;
 uint8_t CDC_Transmit_FS(uint8_t* Buf, uint16_t Len);
 
 /* USER CODE BEGIN EXPORTED_FUNCTIONS */
+/** 1 neu khong con goi IN nao dang gui (TxState == 0 hoac USB chua cau hinh). */
+uint8_t CDC_TxIdle_FS(void);
 
 /* USER CODE END EXPORTED_FUNCTIONS */
 

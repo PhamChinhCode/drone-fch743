@@ -334,7 +334,7 @@ cắm mạch bay.
 | Tham số | File | Mặc định | |
 |---|---|---|---|
 | `FLASHLOG_ENABLE` | [fc_config.h](../Config/fc_config.h) | 1 | |
-| `FLASHLOG_RATE_HZ` | [fc_config.h](../Config/fc_config.h) | 100 | 500 Hz → còn 4,4 phút |
+| `FLASHLOG_RATE_HZ` | [fc_config.h](../Config/fc_config.h) | 500 | 4,4 phút đầy chip (100 Hz → 22 phút) |
 | `QSPI_FLASH_PRESCALER` | [fc_config.h](../Config/fc_config.h) | 3 | 240 MHz ÷ 4 = 60 MHz |
 | `QSPI_FLASH_CS_HIGH_TIME` | [fc_config.h](../Config/fc_config.h) | 4 chu kỳ | 67 ns; W25Q64 đòi ≥ 50 ns |
 

@@ -118,9 +118,13 @@ bool ctrl_poshold_update(float dt, float *roll_rad, float *pitch_rad)
         tgt_fwd   = -g_fc.rc.pitch * g_params.poshold_max_vel_mps;
         tgt_right =  g_fc.rc.roll  * g_params.poshold_max_vel_mps;
 
+        /*
+         * Mốc bám theo nhưng CHƯA CHỐT: thả cần ra thì nhánh dưới phanh trước,
+         * đủ chậm mới chốt — xem POSHOLD_LOCK_SPEED_MPS.
+         */
         s_tgt_n      = g_fc.est.position_m.x;
         s_tgt_e      = g_fc.est.position_m.y;
-        s_pos_locked = g_fc.est.position_valid;
+        s_pos_locked = false;
     } else {
         /*
          * --- Buông cần: GIỮ CHỖ ---
@@ -129,10 +133,19 @@ bool ctrl_poshold_update(float dt, float *roll_rad, float *pitch_rad)
          * tốc mong muốn, rồi kẹp lại. Kẹp là bắt buộc — lệch 20 m mà không
          * kẹp thì nó đòi lao về với tốc độ không điều khiển nổi.
          */
+        /*
+         * Chưa chốt thì mốc BÁM THEO chỗ hiện tại: sai số vị trí bằng 0, tức
+         * vận tốc mong muốn bằng 0 — chỉ còn vòng vận tốc phanh máy bay lại.
+         * Tốc độ xuống dưới POSHOLD_LOCK_SPEED_MPS mới chốt, và chốt ĐÚNG chỗ
+         * đã dừng. Chốt ngay lúc thả cần (cách cũ) thì máy bay trôi qua mốc
+         * 30-47 cm rồi bò lùi về.
+         */
         if (!s_pos_locked) {
-            s_tgt_n      = g_fc.est.position_m.x;
-            s_tgt_e      = g_fc.est.position_m.y;
-            s_pos_locked = true;
+            s_tgt_n = g_fc.est.position_m.x;
+            s_tgt_e = g_fc.est.position_m.y;
+            if (sqrtf(vn * vn + ve * ve) < POSHOLD_LOCK_SPEED_MPS) {
+                s_pos_locked = true;
+            }
         }
 
         const float vmax = g_params.poshold_max_vel_mps;

@@ -247,6 +247,7 @@ bool estimator_update(uint32_t now_us)
 
     g_fc.est.altitude_m = ekf_altitude_m();
     g_fc.est.climb_rate_mps = ekf_altitude_climb_rate_mps();
+    g_fc.est.altitude_reset_sum_m = ekf_altitude_reset_sum_m();
     g_fc.est.altitude_valid = ekf_altitude_is_valid();
 
     /* NED có Z hướng xuống, nên độ cao vào với dấu âm. */

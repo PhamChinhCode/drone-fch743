@@ -123,6 +123,13 @@ void fc_state_update_health(uint32_t now_us)
         mask |= SENSOR_MAG;
     }
 
+    /* GPS. Chi noi "module con gui NAV-PVT", khong noi da co fix. Mat no
+     * KHONG dat co loi - chua co gi phu thuoc vao no. */
+    if (sensor_alive(now_us, g_fc.gps.timestamp_us,
+                     GPS_TIMEOUT_MS, g_fc.gps.healthy)) {
+        mask |= SENSOR_GPS;
+    }
+
     if (sensor_alive(now_us, g_fc.baro.timestamp_us,
                      HEALTH_TIMEOUT_BARO_MS, g_fc.baro.healthy)) {
         mask |= SENSOR_BARO;

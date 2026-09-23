@@ -35,9 +35,24 @@ static float s_integral;        /* phần tích phân của ga          */
 static float s_prev_climb;      /* cho khâu vi phân               */
 static float s_dterm;           /* đạo hàm đã lọc                 */
 static bool  s_primed;          /* đã có mẫu trước để lấy đạo hàm */
+static float s_reset_seen;      /* altitude_reset_sum_m đã áp vào mốc */
+
+/**
+ * Phần lực đẩy theo phương THẲNG ĐỨNG trên mỗi đơn vị ga: cos(roll)·cos(pitch),
+ * kẹp dưới ở cos(ALTHOLD_TILT_COMP_MAX_DEG). Xem chú thích ở fc_config.h.
+ */
+static float tilt_cos(void)
+{
+    const float c = cosf(g_fc.est.attitude_rad.roll) *
+                    cosf(g_fc.est.attitude_rad.pitch);
+    const float c_min = cosf(ALTHOLD_TILT_COMP_MAX_DEG * FC_DEG_TO_RAD);
+
+    return (c > c_min) ? c : c_min;
+}
 
 void ctrl_althold_reset(void)
 {
+    s_reset_seen   = g_fc.est.altitude_reset_sum_m;
     s_target_m     = 0.0f;
     s_climb_target = 0.0f;
     s_integral     = 0.0f;
@@ -70,7 +85,12 @@ void ctrl_althold_enter(float throttle_now)
      */
     const float lim = g_params.althold_i_limit;
 
-    s_integral = fc_constrainf(throttle_now - g_params.althold_hover_thr,
+    /*
+     * Đầu ra có bù nghiêng = (hover + I) / cos, nên để nó bằng throttle_now
+     * thì hover + I phải bằng throttle_now · cos. Vào chế độ lúc đang nghiêng
+     * mà quên nhân cos thì ga nhảy bậc đúng một lần 1/cos.
+     */
+    s_integral = fc_constrainf(throttle_now * tilt_cos() - g_params.althold_hover_thr,
                                -lim, lim);
 }
 
@@ -84,6 +104,17 @@ bool ctrl_althold_update(float dt, float *throttle_out)
      */
     if (!g_fc.est.altitude_valid || dt <= 0.0f || dt > 0.1f) {
         return false;
+    }
+
+    /*
+     * Bộ ước lượng vừa neo lại độ cao theo laser: đó là đổi GỐC đo, không phải
+     * máy bay lên/xuống. Dời mốc đúng lượng đó để sai số độ cao không nhảy bậc
+     * — thiếu bước này thì cú dời 0,84 m ngày 09-19 thành vọt ga rồi cắt ga.
+     */
+    {
+        const float rs = g_fc.est.altitude_reset_sum_m;
+        s_target_m  += rs - s_reset_seen;
+        s_reset_seen = rs;
     }
 
     const float alt   = g_fc.est.altitude_m;
@@ -186,6 +217,12 @@ bool ctrl_althold_update(float dt, float *throttle_out)
      * vài giây — trong đó máy bay rơi.
      */
     float thr = g_params.althold_hover_thr + p_term + s_integral + d_term;
+
+    /*
+     * Bù nghiêng: PID ở trên tính lực đẩy THẲNG ĐỨNG cần có; chia cos để ra
+     * lực đẩy dọc trục thân. Chia TRƯỚC khi kẹp trần/sàn ga.
+     */
+    thr /= tilt_cos();
 
     *throttle_out = fc_constrainf(thr, g_params.althold_thr_min,
                                        g_params.althold_thr_max);

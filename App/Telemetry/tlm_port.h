@@ -100,6 +100,9 @@ uint32_t tlm_port_usb_overruns(void);
 /** Gọi từ HAL_UART_TxCpltCallback khi huart == &huart3. */
 void tlm_port_tx_complete_isr(void);
 
+/** Gọi từ CDC_TransmitCplt_FS(), tức từ NGẮT USB, khi gói IN đã gửi xong. */
+void tlm_port_usb_tx_complete_isr(void);
+
 /**
  * Gọi từ HAL_UART_ErrorCallback khi huart == &huart3.
  * Lỗi khung / tràn đệm khiến HAL huỷ DMA RX; không khởi động lại thì đường

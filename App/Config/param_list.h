@@ -189,6 +189,10 @@ P(mag_offset_z_g,        float, PT_F32, 0, -2.0f, 2.0f,    MAG_OFFSET_Z_G)
 P(mag_scale_x,           float, PT_F32, 0, 0.5f,  2.0f,    MAG_SCALE_X)
 P(mag_scale_y,           float, PT_F32, 0, 0.5f,  2.0f,    MAG_SCALE_Y)
 P(mag_scale_z,           float, PT_F32, 0, 0.5f,  2.0f,    MAG_SCALE_Z)
+/* Sắt mềm xiên — phần ngoài đường chéo của ma trận S (đối xứng). 2026-09-22. */
+P(mag_soft_xy,           float, PT_F32, 0, -0.5f, 0.5f,    MAG_SOFT_XY)
+P(mag_soft_xz,           float, PT_F32, 0, -0.5f, 0.5f,    MAG_SOFT_XZ)
+P(mag_soft_yz,           float, PT_F32, 0, -0.5f, 0.5f,    MAG_SOFT_YZ)
 
 /* ==========================================================================
  * Khí áp kế

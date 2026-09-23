@@ -28,10 +28,11 @@
  */
 
 #include "main.h"
-#include "icm20602.h"
+#include "icm42688.h"
 #include "lsm6dsv.h"
 #include "bmp388.h"
 #include "mtf01p.h"
+#include "gps_ubx.h"
 #include "crsf.h"
 #include "dshot.h"
 #include "tlm_port.h"
@@ -47,9 +48,9 @@
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
-    /* PC4 — chân DRDY của ICM20602, sườn lên, ưu tiên 0. */
+    /* PC4 — chân INT1 (DRDY) của ICM-42688-P, sườn lên, ưu tiên 0. */
     if (GPIO_Pin == SPI1_INT_Pin) {
-        icm20602_drdy_isr();
+        icm42688_drdy_isr();
     }
 
     /* PD7 - chan DRDY cua LSM6DSV (IMU phu), suon len, uu tien 4.
@@ -66,7 +67,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
 {
     if (hspi->Instance == SPI1) {
-        icm20602_spi_complete_isr();
+        icm42688_spi_complete_isr();
     }
     if (hspi->Instance == SPI3) {
         lsm6dsv_spi_complete_isr();
@@ -76,7 +77,7 @@ void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
 void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
 {
     if (hspi->Instance == SPI1) {
-        icm20602_spi_error_isr();
+        icm42688_spi_error_isr();
     }
     if (hspi->Instance == SPI3) {
         lsm6dsv_spi_error_isr();
@@ -143,6 +144,21 @@ void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c)
     }
 }
 
+/*
+ * Callback cua HAL_I2C_Master_Transmit_IT. Chi IST8310 dung (lenh do don sau
+ * moi luot doc) — BMP388 khong ghi bang ngat, nen chi co the la tu ke.
+ */
+void HAL_I2C_MasterTxCpltCallback(I2C_HandleTypeDef *hi2c)
+{
+#if MAG_SOURCE == MAG_SOURCE_I2C
+    if (hi2c->Instance == I2C1 && hi2c->Devaddress != I2C1_BARO_HAL_ADDR) {
+        mag_i2c_write_complete_isr();
+    }
+#else
+    (void)hi2c;
+#endif
+}
+
 void HAL_I2C_ErrorCallback(I2C_HandleTypeDef *hi2c)
 {
     if (hi2c->Instance == I2C1) {
@@ -199,6 +215,14 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
      */
     if (huart->Instance == UART4) {
         mtf01p_uart_error_isr();
+    }
+
+    /*
+     * UART7 — GPS. Cung ly do nhu UART4. Luc dang do baud sai thi loi nay toi
+     * lien tuc — ham chi bat co, gps_ubx_update() khoi dong lai DMA.
+     */
+    if (huart->Instance == UART7) {
+        gps_ubx_uart_error_isr();
     }
 
     /*

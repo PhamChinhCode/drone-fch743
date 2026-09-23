@@ -279,6 +279,21 @@
  */
 #define RATE_DTERM_LPF_HZ 80.0f
 
+/*
+ * TPA (throttle PID attenuation): ga tren diem gay thi P va D cua roll/pitch
+ * giam tuyen tinh, toi ga 1,0 con (1 - RATE_TPA_RATE). Tich phan va yaw giu
+ * nguyen - giong cach Betaflight lam.
+ *
+ * Ly do: ga cao thi moi don vi lenh ra nhieu luc hon, tuc do loi thuc cua
+ * vong tang theo ga. Log 2026-09-21 (chuyen 2, ga 0,85): pitch tu dao dong
+ * +-900 do/s, pid_y +-0,7, motor dap 158 <-> 2047. Treo ga 0,45.
+ *
+ * 0,55 / 0,5: o ga 0,85 con 0,67 P; o ga treo khong doi gi.
+ * Khong dua vao bang tham so, cung ly do voi POSHOLD_LOCK_SPEED_MPS.
+ */
+#define RATE_TPA_BREAKPOINT 0.55f
+#define RATE_TPA_RATE 0.5f
+
 /* ==========================================================================
  * Vòng PID góc (chế độ ANGLE) — vòng NGOÀI
  *
@@ -425,6 +440,18 @@
  * Chỉnh SAU CÙNG, khi vòng vận tốc đã đứng yên gọn gàng.
  */
 #define POSHOLD_POS_KP 0.0f
+
+/*
+ * Tha can xong thi CHUA chot moc ngay: giu van toc = 0 (phanh) cho toi khi
+ * toc do ngang xuong duoi nguong nay roi moi chot vi tri hien tai.
+ *
+ * Chot ngay luc tha can (cach cu) thi may bay dang chay 0,7-1 m/s troi qua
+ * moc 30-47 cm roi mat 2-3 s bo lui ve (log 2026-09-21 500 Hz, chuyen 3).
+ *
+ * KHONG dua vao bang tham so: them tham so la doi table_crc, va firmware se
+ * bo qua ca bo chinh dang luu trong flash.
+ */
+#define POSHOLD_LOCK_SPEED_MPS 0.2f
 
 /* ==========================================================================
  * OFFBOARD — nhan lenh van toc tu may tinh nhung qua MAVLink
@@ -598,6 +625,19 @@
 #define ALTHOLD_THR_MIN 0.10f
 #define ALTHOLD_THR_MAX 0.85f
 
+/*
+ * Bu nghieng: nghieng thi luc day chia ra theo phuong ngang, thanh phan dung
+ * chi con cos(nghieng). Ga ra = ga / (cos roll * cos pitch).
+ *
+ * Khong bu thi nghieng 15 do tut 24 cm (log 2026-09-21, chuyen 2) - tich
+ * phan phai tu hoc lai lan nao cung vay, va luon den tre.
+ *
+ * Tran goc bu: qua goc nay thi dung bu them. 1/cos(35) = 1,22 - nghieng hon
+ * nua ma van bu thi ga vot cao, trong khi do chi la mot khoanh khac.
+ * Khong dua vao bang tham so, cung ly do voi POSHOLD_LOCK_SPEED_MPS.
+ */
+#define ALTHOLD_TILT_COMP_MAX_DEG 35.0f
+
 /* ==========================================================================
  * Điều khiển từ xa (CRSF / ELRS 2.4G trên USART2 @ 420000)
  * ========================================================================== */
@@ -660,7 +700,7 @@
 /* ==========================================================================
  * Cảm biến
  * ========================================================================== */
-/* ICM20602 trên SPI1, DRDY = PC4 (EXTI4) */
+/* ICM-42688-P trên SPI1, INT1 (DRDY) = PC4 (EXTI4). Thay ICM20602 từ 2026-09-21. */
 #define IMU_SAMPLE_RATE_HZ 8000
 #define IMU_GYRO_FS_DPS 2000        /* 250|500|1000|2000 °/s */
 #define IMU_ACCEL_FS_G 16           /* 2|4|8|16 g            */
@@ -700,6 +740,23 @@
 #define IMU_ACCEL_LPF_HZ 30.0f /* lọc accel cho ước lượng */
 
 /*
+ * Notch tinh tren gyro (ICM-20602, vong PID), dat SAU loc thong thap.
+ *
+ * Log 500 Hz 2026-09-21: pitch rung manh o ~220 Hz (214-229), luon dung 2,0
+ * lan dinh ~110 Hz cua roll/yaw -> hai lan toc do quay motor. PT1 100 Hz o
+ * 220 Hz chi con giam 60 %, phan lot qua di thang vao khau P.
+ *
+ * Q = tam / do rong: 220 / 2,5 = 88 Hz, phu du 214-229 va xe dich theo ga
+ * quanh diem treo. Q thap hon thi rong hon nhung tre pha nhieu hon o tan so
+ * thap, dung vao vung vong rate can.
+ *
+ * GIOI HAN: notch TINH, chi dung quanh ga treo. Ga cao motor quay nhanh hon
+ * va hoa tan dich len - luc do TPA moi la lop do chinh. 0 = tat notch.
+ */
+#define IMU_GYRO_NOTCH_HZ 220.0f
+#define IMU_GYRO_NOTCH_Q 2.5f
+
+/*
  * Xoay trục cảm biến sang trục thân máy bay.
  * Quy ước thân: X = mũi trước, Y = cánh phải, Z = hướng xuống (NED body).
  *
@@ -714,15 +771,30 @@
  * chứ không đo trọng lực. Lúc đứng yên, lực riêng hướng LÊN (phản lực của
  * mặt bàn) trong khi trục Z thân hướng XUỐNG, nên số đo phải âm.
  *
- * Bộ ba dấu (+1, -1, -1) là một phép quay hợp lệ: định thức bằng +1. Đừng
- * sửa lẻ một dấu để "cho ra số đẹp" — đảo lẻ sẽ biến hệ trục thành tay trái
- * và làm sai chiều quay của gyro.
+ * Đừng sửa lẻ một dấu để "cho ra số đẹp" — đảo lẻ sẽ biến hệ trục thành tay
+ * trái và làm sai chiều quay của gyro. Ma trận phải có định thức +1.
+ *
+ * LỊCH SỬ:
+ *   ICM20602 (tới 2026-09-21): MAP 0,1,2 / SIGN +1,-1,-1, đã bay kiểm chứng.
+ *   Tức trục chip cũ: X = mũi, Y = trái, Z = lên.
+ *
+ *   ICM-42688-P (từ 2026-09-21): ký hiệu trục trên mạch mới quay 90° so với
+ *   chip cũ quanh trục đứng, Z vẫn hướng lên. Bản đầu suy từ mô tả "ngược
+ *   chiều kim đồng hồ" cho SIGN -1,-1,-1 — ĐO THẬT thì roll và pitch NGƯỢC
+ *   DẤU. Đo 2026-09-21 bằng mode 24 (IMU_CMP), xoay tay quanh từng trục, so
+ *   gyro với LSM6DSV (trục đã kiểm chứng), 986 mẫu, đỉnh 240-500 °/s:
+ *       với SIGN -1,-1,-1:  roll r = -1,00   pitch r = -1,00   yaw r = +1,00
+ *   Nên thực tế: X mới chỉ về PHẢI, Y mới chỉ về MŨI:
+ *       thân x (mũi)  = +Y mới     -> MAP_X = 1, SIGN_X = +1
+ *       thân y (phải) = +X mới     -> MAP_Y = 0, SIGN_Y = +1
+ *       thân z (xuống)= -Z mới     -> MAP_Z = 2, SIGN_Z = -1
+ *   Định thức của [[0,1,0],[1,0,0],[0,0,-1]] = +1, là phép quay hợp lệ.
  */
-#define IMU_AXIS_MAP_X 0
-#define IMU_AXIS_MAP_Y 1
+#define IMU_AXIS_MAP_X 1
+#define IMU_AXIS_MAP_Y 0
 #define IMU_AXIS_MAP_Z 2
 #define IMU_AXIS_SIGN_X (+1)
-#define IMU_AXIS_SIGN_Y (-1)
+#define IMU_AXIS_SIGN_Y (+1)
 #define IMU_AXIS_SIGN_Z (-1)
 
 /* --------------------------------------------------------------------------
@@ -969,6 +1041,25 @@
  *
  * CÁCH ĐO LẠI: xem GĐ4 trong App/Docs/KE_HOACH_LA_BAN_I2C.md.
  *
+ * ---- BỘ SỐ HIỆN HÀNH: IST8310 trên GPS MG-F10-A (MAG_I2C_USE_GPS_MAG 1) ----
+ * ĐO 2026-09-22 ngoài trời, GPS đã bắt cứng lên khung (> 20 cm từ động cơ),
+ * pin lắp, cánh tháo. Xoay cả máy bay 90 s, phủ 26/26 hướng, 4502 mẫu, rồi
+ * khớp ELLIPSOID ĐẦY ĐỦ 9 tham số (magaxis_fit): cal = S (raw - offset).
+ *   |B| sau hiệu chuẩn 0,460 G ± 1,4 % (thẳng trục chỉ đạt ± 5,2 % — có sắt
+ *   mềm xiên y-z -0,13, vì thế mới thêm MAG_SOFT_*). |offset| = 1,66 G: lớn,
+ *   nhưng CỐ ĐỊNH theo module (đo thấy cả khi module nằm rời trên bàn).
+ * Trục (mag_axis_*): MAP 0,1,2 / SIGN -1,-1,+1 — khớp động học theo gyro, cùng
+ * kết quả ở hai lượt xoay độc lập; tâm lệch từ khớp động học trùng tâm
+ * ellipsoid. Kiểm hướng bằng hướng đi GPS (4 hướng, đi bộ) với bộ thẳng trục:
+ * lệch -2..+9°, trước đó QMC5883P với bộ số 09-04 lệch tới +37°.
+ * GÓC CHÚC TỪ đo ra ~+23° trong khi WMM cho +33° ở chỗ đo — nghi từ trường
+ * tại chỗ bị méo (cả QMC cũng ra ~27°); nên đo lại ở bãi trống xa kết cấu thép.
+ *
+ * ---- Bộ số QMC5883P trên bo (MAG_I2C_USE_GPS_MAG 0), 2026-09-04 ----
+ *   OFFSET 0.0404 / 0.0763 / -0.1861   SCALE 0.9863 / 0.9885 / 1.0257
+ *   Sai hướng tới +37° ngày 09-22 (đo sau khi thay IMU, lắp GPS) — cần đo lại
+ *   nếu quay về chip này.
+ *
  * ---- Hai bộ số CŨ, giữ để tra cứu, ĐỪNG dùng lại ----
  * 2026-08-26, chip QMC6309 trên module SHUB (đã hỏng, đã tháo):
  *   OFFSET 0.0028 / 0.2674 / 0.0955   SCALE 1.0005 / 0.9977 / 1.0117
@@ -979,12 +1070,17 @@
  * Bộ đó cho |B| dao động 9,3%. Ba lần đo liên tiếp bằng thuật toán ấy còn
  * lệch nhau tới 10% — dấu hiệu phép khớp suy biến, không phải vật lý.
  */
-#define MAG_OFFSET_X_G 0.0404f
-#define MAG_OFFSET_Y_G 0.0763f
-#define MAG_OFFSET_Z_G -0.1861f
-#define MAG_SCALE_X 0.9863f
-#define MAG_SCALE_Y 0.9885f
-#define MAG_SCALE_Z 1.0257f
+#define MAG_OFFSET_X_G -0.0422f
+#define MAG_OFFSET_Y_G 1.6547f
+#define MAG_OFFSET_Z_G 0.2475f
+/* Đường chéo của S — tên "scale" giữ nguyên để không đổi nghĩa tham số cũ. */
+#define MAG_SCALE_X 1.1424f
+#define MAG_SCALE_Y 0.9740f
+#define MAG_SCALE_Z 1.1949f
+/* Ba số ngoài đường chéo của S (đối xứng: S_yx = S_xy ...). 0 = thẳng trục như trước. */
+#define MAG_SOFT_XY 0.0096f
+#define MAG_SOFT_XZ -0.0207f
+#define MAG_SOFT_YZ -0.1322f
 
 /** Mất bao lâu không có mẫu mới thì coi từ kế là chết. Dùng chung mọi nguồn. */
 #define MAG_TIMEOUT_MS 200
@@ -998,6 +1094,22 @@
  * MAG_RANGE_G/mag_range_g với khối QMC6309 ở trên — driver tự làm tròn
  * xuống mức chip mình hỗ trợ.
  * -------------------------------------------------------------------------- */
+
+/*
+ * 1 = dùng la bàn IST8310 trên module GPS MG-F10-A (từ 2026-09-21): nằm trên
+ *     cột GPS, xa dòng điện motor/ESC hơn la bàn trên bo. CHỈ dò IST8310,
+ *     không lùi về QMC5883P khi thiếu — xem mag_i2c.h.
+ * 0 = dùng QMC5883P trên bo như trước.
+ *
+ * ĐỔI GIÁ TRỊ NÀY LÀ ĐỔI CHIP: MAG_AXIS_* và MAG_OFFSET_* và MAG_SCALE_* phía
+ * trên phải đo lại cho chip mới.
+ */
+/*
+ * 2026-09-22: BẬT — IST8310 đã đo trục và hiệu chuẩn đầy đủ (MAG_OFFSET_*,
+ * MAG_SCALE_*, MAG_SOFT_* phía trên là bộ số của IST8310). Kiểm bằng hướng đi
+ * GPS 4 hướng: lệch +7 / 0 / -2 / -2°. Đổi về 0 thì PHẢI đo lại bộ số QMC5883P.
+ */
+#define MAG_I2C_USE_GPS_MAG 1
 
 /** Timeout cho mỗi lượt Mem_Read/Write lúc init. Nhẹ hơn BARO vì ít byte hơn. */
 #define MAG_I2C_TIMEOUT_MS 20
@@ -1100,6 +1212,42 @@
  * (quay lẫn tịnh tiến), nên để lại xem xét sau.
  */
 #define FLOW_RAD_PER_COUNT 0.00185f
+
+/* --------------------------------------------------------------------------
+ * GPS MicoAir MG-F10-A (u-blox NEO-F10N, L1+L5) trên UART7 — gps_ubx.c
+ *
+ *   PE7 UART7_RX <- TX của module,  PE8 UART7_TX -> RX của module.
+ *   La bàn IST8310 trên cùng module đi I2C1, KHÔNG liên quan tới khối này.
+ *
+ * Dòng u-blox thế hệ 10 chỉ nhận cấu hình dạng key-value (UBX-CFG-VALSET);
+ * CFG-PRT / CFG-MSG / CFG-RATE của M8N không còn tác dụng. Driver gửi cấu
+ * hình vào lớp RAM của module mỗi lần khởi động, KHÔNG ghi flash module.
+ * -------------------------------------------------------------------------- */
+
+/* 0 = biên dịch bỏ hẳn driver, UART7 để trống. */
+#define GPS_ENABLE 1
+
+/* Baud làm việc. Driver tự dò module đang ở baud nào rồi kéo nó về đây. */
+#define GPS_BAUD 115200u
+
+/* Chu kỳ đo, ms. 100 = 10 Hz, mức tối đa của NEO-F10N. */
+#define GPS_MEAS_PERIOD_MS 100u
+
+/*
+ * Mô hình động học cho bộ lọc bên trong module (CFG-NAVSPG-DYNMODEL):
+ *   0 portable, 2 stationary, 3 pedestrian, 4 automotive, 6 airborne <1g,
+ *   7 airborne <2g, 8 airborne <4g. Máy bay đa cánh quạt dùng 6 như PX4/ArduPilot.
+ */
+#define GPS_DYNMODEL 6u
+
+/* Đệm DMA vòng tròn. 10 Hz x ~100 byte = 1 kB/s, 1024 byte ~ 1 s dự phòng. */
+#define GPS_RX_BUFFER_SIZE 1024u
+
+/* Không có NAV-PVT trong khoảng này thì coi như mất GPS (10 Hz -> 5 gói). */
+#define GPS_TIMEOUT_MS 500u
+
+/* Mất NAV-PVT lâu thế này thì dò baud và gửi lại cấu hình từ đầu. */
+#define GPS_RECONFIG_MS 2000u
 
 /*
  * Xoay trục cảm biến flow sang trục thân, cùng quy ước với IMU.
@@ -1231,6 +1379,24 @@
  * ((m/s^2)^2, sigma 0,3) - để laser dựng lại được cả hai thay vì tin giá trị đã trôi. */
 #define EST_RANGE_REANCHOR_VEL_VAR  1.0f
 #define EST_RANGE_REANCHOR_BIAS_VAR 0.09f
+/*
+ * Neo lại phải có BẰNG CHỨNG, và phải được báo ra ngoài.
+ *
+ * Chuyến 2026-09-19 10:30, bay 1,6 m: chúi mũi 11° thì laser đọc 0,74 m suốt
+ * 0,5 s (tia xiên trúng vật khác). Neo theo thời gian đặt độ cao 1,61 -> 0,77;
+ * laser đúng quay lại thì P_vv = 1 cho mẫu 1,6 m lọt cổng với K lớn, kéo độ cao
+ * +0,56 m và tốc độ lên vọt. ALTHOLD vọt ga 0,69 rồi cắt về 0,10 suốt 170 ms:
+ * rơi gần tự do ~0,5 m.
+ *
+ * Nay: phần dư quá EST_RANGE_STEP_M (hoặc quá cổng sigma, hoặc đang mất laser)
+ * là ỨNG VIÊN mức mới. Chỉ khi EST_RANGE_STEP_N mẫu LIÊN TIẾP nằm trong
+ * ±EST_RANGE_STEP_TOL_M của nhau mới neo. Bậc địa hình thì chỉ DỜI độ cao, giữ
+ * v và P; mất laser lâu thì dựng lại như cũ. Mọi lần neo cộng Δh vào
+ * g_fc.est.altitude_reset_sum_m để ALTHOLD dời mốc theo -> ga không giật.
+ */
+#define EST_RANGE_STEP_M     0.30f
+#define EST_RANGE_STEP_N     10u
+#define EST_RANGE_STEP_TOL_M 0.05f
 
 /* --- Ước lượng vận tốc ngang từ optical flow ----------------------------
  *
@@ -1534,12 +1700,16 @@
 #define FLASHLOG_ENABLE 1
 
 /*
- * Nhip ghi. Giu bang BB_RATE_HZ de hai duong log so duoc voi nhau.
+ * Nhip ghi. 500 Hz de nhin duoc dao dong PID/rung tan so cao: o 100 Hz,
+ * rung tren 50 Hz bi chong pho (alias) xuong, khong biet tan so that.
  *
- * 8 MB / (48 byte * 100 Hz) = 29 phut. Nang len 500 Hz thi con 5,8 phut -
- * dang gia neu dang chinh PID va can nhin dao dong tan so cao.
+ * 8 MB / (64 byte * 500 Hz) = 4,4 phut. Het cho thi flashlog DUNG ghi, nen
+ * phai 'flash erase' sau moi buoi bay.
+ *
+ * KHONG con bang BB_RATE_HZ: blackbox the SD dang tat (FC_SD_ENABLE = 0), va
+ * dem RAM 256 KB cua no chi chua duoc 8 giay o 500 Hz.
  */
-#define FLASHLOG_RATE_HZ 100
+#define FLASHLOG_RATE_HZ 500
 
 /*
  * Cong tac bat/tat ghi log, doc tu mot kenh AUX cua tay dieu khien.

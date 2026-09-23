@@ -1,8 +1,13 @@
 /**
  * @file    mag_i2c.h
- * @brief   Driver từ kế rời trên I2C1 — dò và hỗ trợ BA chip: QMC5883P
- *          (0x2C, chip đang lắp trên bo), QMC5883L (0x0D) và HMC5883L
- *          (0x1E, Honeywell thật).
+ * @brief   Driver từ kế rời trên I2C1 — dò và hỗ trợ BỐN chip: QMC5883P
+ *          (0x2C, chip trên bo), QMC5883L (0x0D), HMC5883L (0x1E, Honeywell
+ *          thật) và IST8310 (0x0E, la bàn trên module GPS MG-F10-A).
+ *
+ * CHỌN CHIP (fc_config.h, MAG_I2C_USE_GPS_MAG):
+ *   1 -> CHỈ dò IST8310 trên GPS. Không thấy thì báo lỗi, KHÔNG lùi về chip
+ *        trên bo — bộ hiệu chuẩn và trục thuộc về đúng một chip.
+ *   0 -> dò ba chip trên bo như trước, bỏ qua IST8310.
  *
  * ĐẤU NỐI (FCH743_V1.0):
  *   Dùng CHUNG bus I2C1 với BMP388: PB8 I2C1_SCL, PB7 I2C1_SDA, 400 kHz.
@@ -61,7 +66,8 @@ typedef enum {
     MAG_I2C_VARIANT_NONE = 0,  /**< chưa dò ra, hoặc dò thất bại             */
     MAG_I2C_VARIANT_HMC5883L,  /**< @ 0x1E, xác nhận qua ID 'H','4','3'      */
     MAG_I2C_VARIANT_QMC5883L,  /**< @ 0x0D, xác nhận qua chip id 0xFF        */
-    MAG_I2C_VARIANT_QMC5883P   /**< @ 0x2C, chip id 0x80 — chip đang lắp     */
+    MAG_I2C_VARIANT_QMC5883P,  /**< @ 0x2C, chip id 0x80 — la bàn trên bo    */
+    MAG_I2C_VARIANT_IST8310    /**< @ 0x0E/0x0C, WAI 0x10 — la bàn trên GPS  */
 } mag_i2c_variant_t;
 
 /* ==========================================================================
@@ -134,6 +140,9 @@ void mag_i2c_scan_dump(void);
 
 /** Gọi khi I2C1 đọc xong khối thanh ghi CỦA TỪ KẾ (đã lọc theo Devaddress). */
 void mag_i2c_complete_isr(void);
+
+/** Gọi khi I2C1 ghi xong lệnh đo của IST8310 (lọc theo Devaddress). */
+void mag_i2c_write_complete_isr(void);
 
 /** Gọi khi I2C1 báo lỗi trong lúc đang đọc từ kế. */
 void mag_i2c_error_isr(void);

@@ -56,6 +56,7 @@ typedef enum {
     DBG_MODE_AXISCAL,   /**< TU NHAN chieu truc IMU2 - cong cu GIAI DOAN 2A  */
     DBG_MODE_IMU_CMP,   /**< SO SANH hai IMU + nen nhieu - cong cu GIAI DOAN 2 */
     DBG_MODE_ALTHOLD,   /**< GIU DO CAO: moc, tot do len, ga, tich phan   */
+    DBG_MODE_MAGAXIS,   /**< gyro + accel he THAN cung tu ke THO he CAM BIEN — khop truc tu ke */
     DBG_MODE_COUNT
 } dbg_mode_t;
 

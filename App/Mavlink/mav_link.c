@@ -24,6 +24,7 @@
 #include "ekf_attitude.h"
 #include "ekf_altitude.h"
 #include "ekf_velocity.h"
+#include "gps_ubx.h"
 
 /*
  * Thư viện sinh tự động nên không sửa được, và nó đọc/ghi các trường trong
@@ -123,6 +124,7 @@ static uint32_t mav_sensor_bits(uint32_t mask)
     if (mask & SENSOR_RANGE) { out |= MAV_SYS_STATUS_SENSOR_LASER_POSITION; }
     if (mask & SENSOR_RC)    { out |= MAV_SYS_STATUS_SENSOR_RC_RECEIVER; }
     if (mask & SENSOR_POWER) { out |= MAV_SYS_STATUS_SENSOR_BATTERY; }
+    if (mask & SENSOR_GPS)   { out |= MAV_SYS_STATUS_SENSOR_GPS; }
 
     return out;
 }
@@ -157,7 +159,8 @@ static void send_sys_status(void)
     const uint32_t present = mav_sensor_bits(SENSOR_GYRO | SENSOR_ACCEL |
                                              SENSOR_BARO | SENSOR_FLOW |
                                              SENSOR_RANGE | SENSOR_RC |
-                                             SENSOR_POWER | SENSOR_MAG);
+                                             SENSOR_POWER | SENSOR_MAG |
+                                             (GPS_ENABLE ? SENSOR_GPS : 0u));
     uint32_t health = mav_sensor_bits(g_fc.sys.sensor_health);
 
     /*
@@ -225,29 +228,108 @@ static void send_attitude(uint32_t now_ms)
 }
 
 /*
+ * GPS dang cho mot nghiem vi tri 3D dung duoc: module con song, co gnssFixOK
+ * va kieu fix >= 3D. Dung chung cho GLOBAL_POSITION_INT va GPS_RAW_INT de hai
+ * ban tin khong bao gio noi hai dieu khac nhau ve cung mot fix.
+ */
+static bool gps_fix_3d(void)
+{
+    return g_fc.gps.healthy && g_fc.gps.fix_ok && g_fc.gps.fix_type >= 3u;
+}
+
+/*
  * --- GLOBAL_POSITION_INT (33) ---
  *
- * Bo mach nay KHONG co GPS. Tu hop dong 1.5 chi con 1 Hz (GIAO_UOC 11.1 #14):
- * optical_flow_node ben Pi da chuyen sang lay do cao tu laser (DISTANCE_SENSOR),
- * ban tin nay chi con cho telemetry_aggregator hien thi len GCS.
+ * Tu hop dong 1.5 chi con 1 Hz (GIAO_UOC 11.1 #14): optical_flow_node ben Pi
+ * lay do cao tu laser (DISTANCE_SENSOR), ban tin nay chi con cho hien thi.
  *
- * lat/lon = 0 va hdg = 65535 la cach bao "khong biet" theo dung dac ta. Chi
- * alt, relative_alt va vx/vy/vz mang thong tin that.
+ * Tu hop dong 1.8 (GPS MG-F10-A): lat/lon/alt lay tu GPS KHI co fix 3D, khong
+ * thi van lat = lon = 0 va alt = do cao ap suat nhu truoc — "khong biet" theo
+ * dung dac ta. Pi KHONG dung ban tin nay de hop nhat: nguon GPS cho EKF la
+ * GPS_RAW_INT (co h_acc, fix_type, so ve tinh). hdg van 65535.
  */
 static void send_global_position_int(uint32_t now_ms)
 {
     mavlink_message_t msg;
+    const bool fix = gps_fix_3d();
 
     /* Van toc he NED, don vi cm/s. vz duong la di xuong — trung quy uoc MAVLink. */
     mavlink_msg_global_position_int_pack(MAV_SYSTEM_ID, MAV_COMP_ID_AUTOPILOT1, &msg,
                                          now_ms,
-                                         0, 0,
-                                         (int32_t)(g_fc.baro.altitude_m * 1000.0f),
+                                         fix ? g_fc.gps.lat_e7 : 0,
+                                         fix ? g_fc.gps.lon_e7 : 0,
+                                         fix ? g_fc.gps.alt_msl_mm
+                                             : (int32_t)(g_fc.baro.altitude_m * 1000.0f),
                                          (int32_t)(g_fc.est.altitude_m * 1000.0f),
                                          (int16_t)(g_fc.est.velocity_mps.x * 100.0f),
                                          (int16_t)(g_fc.est.velocity_mps.y * 100.0f),
                                          (int16_t)(g_fc.est.velocity_mps.z * 100.0f),
                                          UINT16_MAX);
+    send_msg(&msg);
+}
+
+/*
+ * --- GPS_RAW_INT (24) --- hop dong 1.8, GIAO_UOC muc 4.3 "GPS_RAW_INT".
+ *
+ * Nguon GPS DUY NHAT cho hop nhat ben Pi (MAVROS gps_status ->
+ * /mavros/gpsstatus/gps1/raw). Co hieu luc nam o fix_type:
+ *   0 NO_GPS   driver khong nhan duoc NAV-PVT (day, nguon, dang do baud)
+ *   1 NO_FIX   module song nhung chua co nghiem (trong nha, anten bi che)
+ *   2 2D, 3 3D, 4 DGPS (SBAS), 5 RTK float, 6 RTK fixed
+ * fix_type < 2 thi lat = lon = 0, KHONG gui toa do cu module con nho.
+ *
+ * eph/epv = UINT16_MAX (khong biet): NAV-PVT chi co pDOP, khong co HDOP/VDOP.
+ * Sai so that nam o h_acc/v_acc (mm) — Pi phai dung hai truong do, khong suy
+ * tu DOP. cog = UINT16_MAX khi dung yen (< 0,5 m/s): huong di chuyen luc do la
+ * nhieu. yaw = 0: module mot anten, khong do duoc huong.
+ */
+static void send_gps_raw_int(uint32_t now_ms)
+{
+    mavlink_message_t msg;
+    const gps_data_t *g = &g_fc.gps;
+
+    uint8_t fix_type;
+    if (!g->healthy) {
+        fix_type = GPS_FIX_TYPE_NO_GPS;
+    } else if (!g->fix_ok || g->fix_type < 2u) {
+        fix_type = GPS_FIX_TYPE_NO_FIX;
+    } else if (g->fix_type == 2u) {
+        fix_type = GPS_FIX_TYPE_2D_FIX;
+    } else if (g->carr_soln == 2u) {
+        fix_type = GPS_FIX_TYPE_RTK_FIXED;
+    } else if (g->carr_soln == 1u) {
+        fix_type = GPS_FIX_TYPE_RTK_FLOAT;
+    } else if (g->diff_soln) {
+        fix_type = GPS_FIX_TYPE_DGPS;
+    } else {
+        fix_type = GPS_FIX_TYPE_3D_FIX;
+    }
+    const bool pos = (fix_type >= GPS_FIX_TYPE_2D_FIX);
+
+    /* float -> so nguyen co chan: h_acc luc chua fix co the ~4e6 m. */
+    const float h_mm   = fminf(g->h_acc_m * 1000.0f, 4.0e9f);
+    const float v_mm   = fminf(g->v_acc_m * 1000.0f, 4.0e9f);
+    const float s_mmps = fminf(g->s_acc_mps * 1000.0f, 4.0e9f);
+    const float spd    = fminf(g->ground_speed_mps * 100.0f, 65534.0f);
+    const float cog    = g->course_deg * 100.0f;
+
+    mavlink_msg_gps_raw_int_pack(MAV_SYSTEM_ID, MAV_COMP_ID_AUTOPILOT1, &msg,
+                                 (uint64_t)now_ms * 1000u,
+                                 fix_type,
+                                 pos ? g->lat_e7 : 0,
+                                 pos ? g->lon_e7 : 0,
+                                 pos ? g->alt_msl_mm : 0,
+                                 UINT16_MAX, UINT16_MAX,
+                                 pos ? (uint16_t)spd : UINT16_MAX,
+                                 (pos && g->ground_speed_mps >= 0.5f)
+                                     ? (uint16_t)fminf(fmaxf(cog, 0.0f), 35999.0f) : UINT16_MAX,
+                                 g->healthy ? g->num_sv : 255u,
+                                 pos ? g->alt_ellipsoid_mm : 0,
+                                 pos ? (uint32_t)h_mm : 0u,
+                                 pos ? (uint32_t)v_mm : 0u,
+                                 pos ? (uint32_t)s_mmps : 0u,
+                                 pos ? (uint32_t)(g->course_acc_deg * 1.0e5f) : 0u,
+                                 0u);
     send_msg(&msg);
 }
 
@@ -879,6 +961,7 @@ static void tick_ext_state  (uint32_t now_ms) { (void)now_ms; send_extended_sys_
 static void tick_offboard   (uint32_t now_ms) { send_offboard_state(now_ms);           }
 static void tick_offboard_rx(uint32_t now_ms) { send_offboard_rx(now_ms);              }
 static void tick_distance   (uint32_t now_ms) { send_distance_sensor(now_ms);          }
+static void tick_gps_raw    (uint32_t now_ms) { send_gps_raw_int(now_ms);              }
 
 static mav_sched_t s_rates[] = {
     { 1000, 0, tick_heartbeat   },   /*  1 Hz */
@@ -893,6 +976,9 @@ static mav_sched_t s_rates[] = {
     {  500, 0, tick_offboard_rx },   /*  2 Hz — OB_RX_OK/REJ/CLP, OB_T_FWD/RGT/UP/YAWR */
     {   50, 0, tick_distance    },   /* 20 Hz — DISTANCE_SENSOR */
     {  200, 0, tick_rc_channels },   /*  5 Hz — RC_CHANNELS, chỉ hiển thị */
+#if GPS_ENABLE
+    {  200, 0, tick_gps_raw     },   /*  5 Hz — GPS_RAW_INT, hợp đồng 1.8 */
+#endif
 };
 
 #define MAV_SCHED_COUNT  (sizeof(s_rates) / sizeof(s_rates[0]))

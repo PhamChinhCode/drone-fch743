@@ -1,5 +1,19 @@
 # Sao lưu bảng tham số — 2026-09-13, cập nhật 2026-09-18
 
+## Bản 2026-09-21 — trước khi đổi IMU sang ICM-42688-P
+
+Đọc trên firmware `a33fe05` (có thay đổi chưa commit), `table_crc = 0x61D4CE56`,
+167 tham số, `seq = 25`. Firmware ICM-42688 đổi mặc định `imu_axis_*` nên
+`table_crc` đổi và cấu hình cũ bị bỏ — nạp lại bằng file dưới, **bỏ các dòng
+`imu_axis_*`** (trục mới nằm sẵn trong mặc định).
+
+| File | Nội dung |
+|---|---|
+| `2026-09-21_toan_bo.txt` | 167 tham số, lệnh `dump` |
+| `2026-09-21_khac_mac_dinh.txt` | 18 tham số khác mặc định, lệnh `diff` |
+| `flash_o_A_2026-09-21.bin` | Ô flash A thô, 480 byte @ `0x081C0000` |
+| `flash_o_B_2026-09-21.bin` | Ô flash B thô, 480 byte @ `0x081E0000` |
+
 Bản sao lưu bảng tham số trong flash, dùng để nạp lại khi cấu hình bị mất hoặc
 hỏng.
 

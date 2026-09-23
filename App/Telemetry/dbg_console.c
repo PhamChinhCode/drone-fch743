@@ -6,7 +6,7 @@
 #include "dbg_console.h"
 #include "fc_state.h"
 #include "fc_time.h"
-#include "icm20602.h"
+#include "icm42688.h"
 #include "lsm6dsv.h"
 #include "bmp388.h"
 #if MAG_SOURCE == MAG_SOURCE_I2C
@@ -719,6 +719,9 @@ static void emit_header(void)
     case DBG_MODE_AXISCAL:
         wr_str(&w, "  raw_x  raw_y  raw_z |  truc  dau |  giu | buoc | huong dan");
         break;
+    case DBG_MODE_MAGAXIS:
+        wr_str(&w, "      gx      gy      gz |     ax     ay     az |    msx    msy    msz |    count");
+        break;
     case DBG_MODE_IMU_CMP:
         wr_str(&w, "   gx_1   gx_2 |   gy_1   gy_2 |   gz_1   gz_2 |   sd_1   sd_2 |  |a|_1  |a|_2 |  hz_1  hz_2");
         break;
@@ -756,8 +759,8 @@ static void emit_imu(void)
 
     if (imu->calibrated) {
         wr_str(&w, "OK");
-    } else if (icm20602_get_state() == ICM_STATE_CALIBRATING) {
-        wr_i32(&w, (int32_t)icm20602_calibration_progress(), 0);
+    } else if (icm42688_get_state() == ICM_STATE_CALIBRATING) {
+        wr_i32(&w, (int32_t)icm42688_calibration_progress(), 0);
         wr_ch(&w, '%');
     } else {
         wr_str(&w, "--");
@@ -2317,6 +2320,46 @@ static void emit_axiscal(void)
  *     sd_1 va sd_2 KHAC NHAU ro  -> nhieu co phan doc lap, hop nhat co ich.
  *     sd_2 << sd_1 o ca hai dieu kien -> can nhac doi LSM6DSV lam IMU chinh.
  */
+/*
+ * Khop truc tu ke — du lieu tho cho mot phep khop tren may tinh.
+ *
+ *   gx..gz  gyro he THAN (truc IMU da kiem chung), do/giay, chua loc
+ *   ax..az  gia toc he THAN, m/s^2
+ *   msx..z  tu truong he CAM BIEN (raw_gauss: da doi thang, CHUA hieu chuan,
+ *           CHUA xoay truc), Gauss
+ *   count   so mau tu ke — de biet dong nao mang mau moi
+ *
+ * Xoay tay may bay quanh du ba truc. Truc dung la phep xoay M (he cam bien
+ * -> he than) lam cho tu truong quay DUNG theo gyro: dm/dt = -w x (m - b),
+ * voi b la sat cung. Tim M trong 24 phep xoay truc-thang la ra mag_axis_*,
+ * khong can biet huong Bac va khong phu thuoc hieu chuan.
+ */
+static void emit_magaxis(void)
+{
+    char line[DBG_LINE_MAX];
+    wr_t w = { line, 0, sizeof(line) };
+
+    const imu_data_t *i = &g_fc.imu;
+    const mag_data_t *m = &g_fc.mag;
+
+    wr_fix(&w, i->gyro_dps.x, 2, 8);
+    wr_fix(&w, i->gyro_dps.y, 2, 8);
+    wr_fix(&w, i->gyro_dps.z, 2, 8);
+    wr_str(&w, " |");
+    wr_fix(&w, i->accel_mps2.x, 2, 7);
+    wr_fix(&w, i->accel_mps2.y, 2, 7);
+    wr_fix(&w, i->accel_mps2.z, 2, 7);
+    wr_str(&w, " |");
+    wr_fix(&w, m->raw_gauss.x, 4, 7);
+    wr_fix(&w, m->raw_gauss.y, 4, 7);
+    wr_fix(&w, m->raw_gauss.z, 4, 7);
+    wr_str(&w, " |");
+    wr_i32(&w, (int32_t)m->sample_count, 9);
+
+    wr_eol(&w);
+    (void)tx_push(line, w.len);
+}
+
 static void emit_imu_cmp(void)
 {
     char line[DBG_LINE_MAX];
@@ -2334,7 +2377,7 @@ static void emit_imu_cmp(void)
     wr_fix(&w, a->gyro_dps.z, 2, 7);
     wr_fix(&w, b->gyro_dps.z, 2, 7);
     wr_str(&w, " |");
-    wr_fix(&w, icm20602_gyro_sigma_dps(), 3, 7);
+    wr_fix(&w, icm42688_gyro_sigma_dps(), 3, 7);
     wr_fix(&w, lsm6dsv_gyro_sigma_dps(),  3, 7);
     wr_str(&w, " |");
     wr_fix(&w, vec3f_norm(a->accel_mps2) / FC_GRAVITY_MPS2, 2, 7);
@@ -2532,6 +2575,7 @@ void dbg_console_update(uint32_t now_ms)
     case DBG_MODE_MAGCAL:   emit_magcal();   break;
     case DBG_MODE_AXISCAL:  emit_axiscal();  break;
     case DBG_MODE_IMU_CMP:  emit_imu_cmp();  break;
+    case DBG_MODE_MAGAXIS:  emit_magaxis();  break;
     default:                                break;
     }
 }

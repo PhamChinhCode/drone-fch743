@@ -339,7 +339,16 @@ void flashlog_update(uint32_t now_us)
         if (fc_elapsed_us(now_us, s_last_us) >= FL_PERIOD_US) {
             bb_record_t r;
 
-            s_last_us = now_us;
+            /*
+             * Cong don theo chu ky chu khong gan bang now_us: vong lap chinh
+             * tre vai tram us moi lan, o chu ky 2 ms thi gan now_us se keo
+             * nhip thuc xuong ~470 Hz trong khi moc dau chuyen ghi 500.
+             * Tre qua mot chu ky thi bat nhip lai, khong ghi don bu.
+             */
+            s_last_us += FL_PERIOD_US;
+            if (fc_elapsed_us(now_us, s_last_us) >= FL_PERIOD_US) {
+                s_last_us = now_us;
+            }
             log_record_fill(&r, fc_elapsed_us(now_us, s_t0_us) / 1000u);
             append_bytes(&r, sizeof(r));
             s_records++;

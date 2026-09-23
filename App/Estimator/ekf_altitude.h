@@ -76,6 +76,13 @@ float ekf_altitude_climb_uncertainty_mps(void);
 bool ekf_altitude_is_valid(void);
 
 /**
+ * Tổng lượng độ cao bị DỜI do neo lại theo laser kể từ khởi động, mét. Bên
+ * giữ độ cao so với giá trị lần trước và dời mốc đúng phần chênh — xem
+ * EST_RANGE_STEP_M trong fc_config.h.
+ */
+float ekf_altitude_reset_sum_m(void);
+
+/**
  * true nếu laser được DÙNG (cập nhật hoặc neo lại) trong max_ms vừa qua. Không có laser thì độ
  * cao chỉ còn baro + gia tốc: trôi tới ~0,9 m/s khi nghiêng nhiều mà P vẫn nhỏ (đo 09-18).
  */

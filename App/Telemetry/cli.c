@@ -16,6 +16,7 @@
 #include "fc_time.h"
 #include "qspi_flash.h"
 #include "flashlog.h"
+#include "gps_ubx.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -396,6 +397,7 @@ static void cmd_help(void)
     cli_out("  version              board, firmware, table_crc");
     cli_out("  status               arm, cam bien, vong lap");
     cli_out("  offboard             trang thai duong dieu khien tu Pi");
+    cli_out("  gps                  trang thai GPS UART7: baud, fix, vi tri, sai so");
     cli_out("  get [tien_to]        in tham so khop tien to");
     cli_out("  set <ten>=<gia_tri>  dat gia tri, in lai so THUC SU nhan");
     cli_out("  dump                 in tat ca dang 'set ten=gia_tri'");
@@ -465,6 +467,53 @@ static void cmd_offboard(void)
         cli_out_int("vlen_mms",  (int32_t)(ctrl_offboard_climb_mps() * 1000.0f));
         cli_out_int("yaw_mdps",  (int32_t)(ctrl_offboard_yaw_rate_dps() * 1000.0f));
     }
+}
+
+/*
+ * Trang thai GPS. Doc tu tren xuong la ra ngay hong o dau:
+ *   byte = 0            -> khong co tin hieu vao PE7: day, nguon 5 V
+ *   byte tang, khung = 0 -> sai baud (dang do) hoac dau nham TX/RX
+ *   ack = 0, nak > 0    -> module tu choi cau hinh
+ *   pvt_tuoi_ms lon     -> module im, driver se tu do lai
+ *   fix < 3 / sv thap   -> dang trong nha hoac anten bi che
+ */
+static void cmd_gps(void)
+{
+    const uint32_t now = millis();
+    const uint32_t age = gps_ubx_age_ms(now);
+    const gps_data_t *g = &g_fc.gps;
+
+    cli_out(gps_ubx_state_name());
+    cli_out_int("baud",        (int32_t)gps_ubx_baud());
+    cli_out_int("byte",        (int32_t)gps_ubx_bytes_received());
+    cli_out_int("khung_ok",    (int32_t)gps_ubx_frames_ok());
+    cli_out_int("loi_ck",      (int32_t)gps_ubx_checksum_errors());
+    cli_out_int("loi_uart",    (int32_t)gps_ubx_uart_errors());
+    cli_out_int("cfg_gui",     (int32_t)gps_ubx_config_sent());
+    cli_out_int("ack",         (int32_t)gps_ubx_ack_count());
+    cli_out_int("nak",         (int32_t)gps_ubx_nak_count());
+    cli_out_int("pvt",         (int32_t)g->sample_count);
+    /* UINT32_MAX = chua co goi NAV-PVT nao. In -1 cho de doc. */
+    cli_out_int("pvt_tuoi_ms", (age == UINT32_MAX) ? -1 : (int32_t)age);
+
+    cli_out_int("fix",         g->fix_type);
+    cli_out_int("fix_ok",      g->fix_ok ? 1 : 0);
+    cli_out_int("sv",          g->num_sv);
+    cli_out_int("pdop_x100",   g->pdop_x100);
+    cli_out_int("lat_e7",      g->lat_e7);
+    cli_out_int("lon_e7",      g->lon_e7);
+    cli_out_int("alt_msl_mm",  g->alt_msl_mm);
+    /* Chua fix thi module bao sai so ~4e6 m, tran int32 — chan lai, 2e9 = "khong biet". */
+    cli_out_int("hacc_mm",     (int32_t)fminf(g->h_acc_m * 1000.0f, 2.0e9f));
+    cli_out_int("vacc_mm",     (int32_t)fminf(g->v_acc_m * 1000.0f, 2.0e9f));
+    cli_out_int("vn_mms",      (int32_t)(g->vel_ned_mps.x * 1000.0f));
+    cli_out_int("ve_mms",      (int32_t)(g->vel_ned_mps.y * 1000.0f));
+    cli_out_int("vd_mms",      (int32_t)(g->vel_ned_mps.z * 1000.0f));
+    cli_out_int("sacc_mms",    (int32_t)fminf(g->s_acc_mps * 1000.0f, 2.0e9f));
+    cli_out_int("utc_hhmmss",  g->utc_valid ? (int32_t)g->utc_hour * 10000 +
+                                              (int32_t)g->utc_min * 100 +
+                                              (int32_t)g->utc_sec
+                                            : -1);
 }
 
 static void cmd_status(void)
@@ -769,6 +818,8 @@ static void cmd_flash(const char *args)
                     (int32_t)(flashlog_used_bytes() / 1024u));
         cli_out_int("log suc chua KB",
                     (int32_t)(flashlog_capacity_bytes() / 1024u));
+        /* Configurator doi KB ra phut bang nhip nay - dung viet cung ben do. */
+        cli_out_int("log nhip Hz", (int32_t)FLASHLOG_RATE_HZ);
         cli_out_int("log ban ghi chuyen nay", (int32_t)flashlog_records());
         cli_out_int("log ban ghi bi bo", (int32_t)flashlog_dropped());
         cli_out(flashlog_state_name());
@@ -1051,6 +1102,7 @@ bool cli_execute_ex(const char *line, const cli_sink_t *sink)
     if (strcmp(p, "version") == 0)  { cmd_version(); return true; }
     if (strcmp(p, "status") == 0)   { cmd_status();  return true; }
     if (strcmp(p, "offboard") == 0) { cmd_offboard(); return true; }
+    if (strcmp(p, "gps") == 0)      { cmd_gps();     return true; }
     if (strcmp(p, "set") == 0)      { return cmd_set(args); }
     if (strcmp(p, "save") == 0)     { cmd_save();    return true; }
     if (strcmp(p, "mode") == 0)     { cmd_mode(args); return true; }

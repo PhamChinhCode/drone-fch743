@@ -1,9 +1,13 @@
 /**
- * @file    icm20602.c
- * @brief   Hiện thực driver ICM-20602.
+ * @file    icm42688.c
+ * @brief   Hiện thực driver ICM-42688-P.
+ *
+ * Dựng lại từ icm20602.c: đường dữ liệu (DRDY -> DMA -> xử lý trong ngắt),
+ * bộ lọc, notch, hiệu chuẩn bias giữ NGUYÊN. Chỉ khác phần cấu hình thanh ghi
+ * và thứ tự byte trong khối dữ liệu — xem đầu icm42688.h.
  */
 
-#include "icm20602.h"
+#include "icm42688.h"
 #include "imu_noise.h"
 #include "fc_state.h"
 #include "param_table.h"
@@ -30,14 +34,16 @@ extern SPI_HandleTypeDef hspi1;
  */
 typedef struct {
     uint16_t value;   /* dps hoac g */
-    uint8_t  fs_sel;  /* bit 4..3 cua thanh ghi CONFIG */
+    uint8_t  fs_sel;  /* bit 7..5 cua GYRO_CONFIG0 / ACCEL_CONFIG0 */
 } icm_fs_entry_t;
 
+/* Ma NGUOC so voi ICM-20602: 0 la dai LON nhat. Bang van xep tang dan theo
+ * value vi fs_pick() can thu tu do. */
 static const icm_fs_entry_t ICM_GYRO_FS[] = {
-    { 250u, 0u }, { 500u, 1u }, { 1000u, 2u }, { 2000u, 3u },
+    { 250u, 3u }, { 500u, 2u }, { 1000u, 1u }, { 2000u, 0u },
 };
 static const icm_fs_entry_t ICM_ACCEL_FS[] = {
-    { 2u, 0u }, { 4u, 1u }, { 8u, 2u }, { 16u, 3u },
+    { 2u, 3u }, { 4u, 2u }, { 8u, 1u }, { 16u, 0u },
 };
 
 /** Muc ho tro lon nhat KHONG vuot qua `want`; khong co thi lay muc thap nhat. */
@@ -54,17 +60,30 @@ static const icm_fs_entry_t *fs_pick(const icm_fs_entry_t *tab, size_t n,
     return best;
 }
 
+/* ODR 8 kHz cho ca gyro lan accel (ma 3 trong bit 3..0 cua *_CONFIG0). */
+#define ICM42_ODR_8KHZ      0x03u
+
 /*
- * DLPF_CFG = 0 kèm FCHOICE_B = 00: băng thông gyro 250 Hz, tốc độ ra 8 kHz.
- * Đây là cấu hình chuẩn cho máy bay điều khiển ở 4-8 kHz.
+ * Bo loc chong rang cua (AAF) ~258 Hz cho CA gyro lan accel — gan nhat voi
+ * DLPF 250 Hz cua ICM-20602 truoc day, de cac bo loc phia sau (PT1 100 Hz,
+ * notch 220 Hz) va he so PID khong doi y nghia. Bo ba so lay tu bang AAF
+ * trong datasheet: DELT = 6, DELTSQR = 36, BITSHIFT = 10.
  */
-#define ICM_GYRO_DLPF_CFG   0u
-#define ICM_ACCEL_DLPF_CFG  0u    /* băng thông accel 218,1 Hz, ODR 1 kHz */
+#define ICM42_AAF_DELT      6u
+#define ICM42_AAF_DELTSQR   36u
+#define ICM42_AAF_BITSHIFT  10u
+
+/*
+ * Bo loc UI sau AAF: che do "low latency" (ma 14) cho ca hai — chi lay mau
+ * thua dau ra Dec2, khong them bac loc nao. Loc da co AAF va PT1/notch phia
+ * sau lo; them mot tang nua chi them tre pha cho vong rate.
+ */
+#define ICM42_UI_FILT_LOW_LATENCY  0xEEu
 
 /*
  * He so doi thang: gia tri tho 16-bit co dau -> don vi vat ly.
  *
- * Truoc day la macro hang so. Gio la bien tinh san trong icm20602_init(),
+ * Truoc day la macro hang so. Gio la bien tinh san trong icm42688_init(),
  * lay tu CHINH muc dai do da ghi vao chip - khong phai tu tham so nguoi dung
  * yeu cau. Neu hai thu nay lech nhau thi moi so do deu sai theo mot ti le co
  * dinh, va do la kieu sai rat kho phat hien vi may bay van bay, chi la sai
@@ -73,8 +92,8 @@ static const icm_fs_entry_t *fs_pick(const icm_fs_entry_t *tab, size_t n,
 static float s_gyro_scale;
 static float s_accel_scale;
 
-/* Nhiệt độ: T[°C] = raw / 326,8 + 25 (theo datasheet mục 4.20). */
-#define ICM_TEMP_SCALE   (1.0f / 326.8f)
+/* Nhiệt độ: T[°C] = raw / 132,48 + 25 (datasheet ICM-42688-P). */
+#define ICM_TEMP_SCALE   (1.0f / 132.48f)
 #define ICM_TEMP_OFFSET  25.0f
 
 /*
@@ -93,10 +112,10 @@ static float s_accel_scale;
  * định chúng rơi vào DTCMRAM và DMA không đọc ghi được.
  * ========================================================================== */
 
-FC_DMA_BUFFER static uint8_t s_tx[1u + ICM_BURST_DATA_LEN];
-FC_DMA_BUFFER static uint8_t s_rx[1u + ICM_BURST_DATA_LEN];
+FC_DMA_BUFFER static uint8_t s_tx[1u + ICM42_BURST_DATA_LEN];
+FC_DMA_BUFFER static uint8_t s_rx[1u + ICM42_BURST_DATA_LEN];
 
-static volatile icm20602_state_t s_state = ICM_STATE_UNINIT;
+static volatile icm42688_state_t s_state = ICM_STATE_UNINIT;
 static volatile bool     s_busy;            /* đang có transfer DMA chạy   */
 static volatile uint32_t s_sample_us;       /* mốc thời gian lúc DRDY      */
 static uint32_t          s_prev_sample_us;
@@ -148,6 +167,7 @@ static inline float notch_apply(int axis, float x)
     return y;
 }
 static uint8_t s_gyro_fs_sel;               /* bit dai do da ghi vao chip  */
+static uint8_t s_who_am_i;
 static uint8_t s_accel_fs_sel;
 
 #if IMU_NOISE_STATS_ENABLE
@@ -186,7 +206,7 @@ static bool reg_write(uint8_t reg, uint8_t value)
 
 static bool reg_read(uint8_t reg, uint8_t *value)
 {
-    uint8_t tx[2] = { (uint8_t)(reg | ICM_SPI_READ_BIT), 0x00u };
+    uint8_t tx[2] = { (uint8_t)(reg | ICM42_SPI_READ_BIT), 0x00u };
     uint8_t rx[2] = { 0, 0 };
 
     CS_LOW();
@@ -224,9 +244,11 @@ static bool spi_set_baud(uint32_t prescaler)
  * Khởi tạo
  * ========================================================================== */
 
-bool icm20602_init(void)
+bool icm42688_init(void)
 {
     uint8_t who = 0;
+
+    s_who_am_i = 0;
 
     s_state = ICM_STATE_UNINIT;
     s_busy  = false;
@@ -263,72 +285,121 @@ bool icm20602_init(void)
 
     CS_HIGH();
 
-    /* Ghi thanh ghi cấu hình ở 1 MHz cho chắc ăn, tuy chip chịu được 10 MHz. */
+    /* Ghi thanh ghi cấu hình ở 1 MHz cho chắc ăn, tuy chip chịu được 24 MHz. */
     if (!spi_set_baud(SPI_BAUDRATEPRESCALER_64)) {
         goto fail;
     }
     HAL_Delay(1);
 
     /* --- Đặt lại toàn bộ chip --- */
-    if (!reg_write(ICM_REG_PWR_MGMT_1, 0x80u)) {   /* DEVICE_RESET */
+    (void)reg_write(ICM42_REG_BANK_SEL, 0x00u);
+    if (!reg_write(ICM42_REG_DEVICE_CONFIG, 0x01u)) {   /* SOFT_RESET_CONFIG */
         goto fail;
     }
-    HAL_Delay(100);
-
-    /* Chờ bit reset tự xoá. */
-    for (int i = 0; i < 50; i++) {
-        uint8_t pwr = 0xFFu;
-        if (reg_read(ICM_REG_PWR_MGMT_1, &pwr) && (pwr & 0x80u) == 0) {
-            break;
-        }
-        HAL_Delay(2);
-    }
-
-    /* Đặt lại đường tín hiệu của gyro, accel và cảm biến nhiệt. */
-    if (!reg_write(ICM_REG_SIGNAL_PATH_RESET, 0x07u)) {
-        goto fail;
-    }
-    HAL_Delay(100);
-
-    /*
-     * Tắt hẳn giao diện I2C. Bắt buộc với ICM-20602 nối SPI: nếu bỏ qua,
-     * chip có thể tự chuyển sang chế độ I2C khi thấy nhiễu trên bus và
-     * ngừng đáp ứng lệnh SPI.
-     */
-    if (!reg_write(ICM_REG_USER_CTRL, 0x10u)) {     /* I2C_IF_DIS */
-        goto fail;
-    }
-
-    /* Rời chế độ ngủ, chọn nguồn clock tự động (PLL theo gyro nếu sẵn sàng). */
-    if (!reg_write(ICM_REG_PWR_MGMT_1, 0x01u)) {
-        goto fail;
-    }
-    HAL_Delay(15);
+    HAL_Delay(2);                                        /* datasheet: >= 1 ms */
 
     /* --- Xác minh đúng chip --- */
-    if (!reg_read(ICM_REG_WHO_AM_I, &who) || who != ICM_WHO_AM_I_VALUE) {
+    if (!reg_read(ICM42_REG_WHO_AM_I, &who)) {
         goto fail;
+    }
+    s_who_am_i = who;
+    if (who != ICM42_WHO_AM_I_VALUE) {
+        goto fail;
+    }
+
+    /*
+     * Tắt hẳn giao diện I2C (UI_SIFS_CFG = 11), giữ dữ liệu big-endian như
+     * mặc định (bit 5..4). Cùng lý do như ICM-20602: nhiễu trên bus có thể
+     * làm chip nhảy sang I2C và ngừng đáp SPI.
+     */
+    if (!reg_write_verify(ICM42_REG_INTF_CONFIG0, 0x33u)) {
+        goto fail;
+    }
+
+    /*
+     * Tắt AFSR (bit 7..6 = 01). Ở chế độ mặc định chip tự đổi dải đo bên
+     * trong, và ngay lúc đổi dữ liệu gyro đứng yên vài mẫu — Betaflight/PX4
+     * đều gặp và đều tắt. Các bit khác (nguồn clock) giữ nguyên.
+     */
+    {
+        uint8_t v = 0;
+        if (!reg_read(ICM42_REG_INTF_CONFIG1, &v) ||
+            !reg_write_verify(ICM42_REG_INTF_CONFIG1, (uint8_t)((v & 0x3Fu) | 0x40u))) {
+            goto fail;
+        }
+    }
+
+    /* --- AAF gyro, bank 1 --- */
+    {
+        uint8_t v = 0;
+        bool ok = reg_write(ICM42_REG_BANK_SEL, 0x01u);
+        /* STATIC2: bit1 AAF_DIS = 0 (bật AAF), bit0 NF_DIS = 1 (tắt notch
+         * trong chip — tần số notch đó không biết, notch của ta ở phía sau). */
+        ok = ok && reg_read(ICM42_REG_GYRO_CONFIG_STATIC2, &v);
+        ok = ok && reg_write_verify(ICM42_REG_GYRO_CONFIG_STATIC2,
+                                    (uint8_t)((v & ~0x03u) | 0x01u));
+        ok = ok && reg_write_verify(ICM42_REG_GYRO_CONFIG_STATIC3, ICM42_AAF_DELT);
+        ok = ok && reg_write_verify(ICM42_REG_GYRO_CONFIG_STATIC4,
+                                    (uint8_t)(ICM42_AAF_DELTSQR & 0xFFu));
+        ok = ok && reg_write_verify(ICM42_REG_GYRO_CONFIG_STATIC5,
+                                    (uint8_t)((ICM42_AAF_BITSHIFT << 4) |
+                                              (ICM42_AAF_DELTSQR >> 8)));
+
+        /* --- AAF accel, bank 2 --- */
+        ok = ok && reg_write(ICM42_REG_BANK_SEL, 0x02u);
+        ok = ok && reg_write_verify(ICM42_REG_ACCEL_CONFIG_STATIC2,
+                                    (uint8_t)(ICM42_AAF_DELT << 1));   /* bit0 AAF_DIS = 0 */
+        ok = ok && reg_write_verify(ICM42_REG_ACCEL_CONFIG_STATIC3,
+                                    (uint8_t)(ICM42_AAF_DELTSQR & 0xFFu));
+        ok = ok && reg_write_verify(ICM42_REG_ACCEL_CONFIG_STATIC4,
+                                    (uint8_t)((ICM42_AAF_BITSHIFT << 4) |
+                                              (ICM42_AAF_DELTSQR >> 8)));
+
+        /* Luôn trả về bank 0, kể cả khi hỏng giữa chừng. */
+        ok = reg_write(ICM42_REG_BANK_SEL, 0x00u) && ok;
+        if (!ok) {
+            goto fail;
+        }
     }
 
     /* --- Cấu hình đo --- */
-    if (!reg_write_verify(ICM_REG_PWR_MGMT_2,    0x00u) ||   /* bật đủ 6 trục   */
-        !reg_write_verify(ICM_REG_CONFIG,        ICM_GYRO_DLPF_CFG) ||
-        !reg_write_verify(ICM_REG_SMPLRT_DIV,    0x00u) ||
-        !reg_write_verify(ICM_REG_GYRO_CONFIG,   (uint8_t)(s_gyro_fs_sel << 3)) ||
-        !reg_write_verify(ICM_REG_ACCEL_CONFIG,  (uint8_t)(s_accel_fs_sel << 3)) ||
-        !reg_write_verify(ICM_REG_ACCEL_CONFIG2, ICM_ACCEL_DLPF_CFG) ||
-        !reg_write_verify(ICM_REG_FIFO_EN,       0x00u)) {   /* không dùng FIFO */
+    if (!reg_write_verify(ICM42_REG_GYRO_CONFIG0,
+                          (uint8_t)((s_gyro_fs_sel << 5) | ICM42_ODR_8KHZ)) ||
+        !reg_write_verify(ICM42_REG_ACCEL_CONFIG0,
+                          (uint8_t)((s_accel_fs_sel << 5) | ICM42_ODR_8KHZ)) ||
+        !reg_write_verify(ICM42_REG_GYRO_ACCEL_CONFIG0, ICM42_UI_FILT_LOW_LATENCY) ||
+        !reg_write_verify(ICM42_REG_FIFO_CONFIG, 0x00u)) {      /* không dùng FIFO */
         goto fail;
     }
 
     /*
-     * INT_PIN_CFG = 0x00: chân INT tích cực mức cao, đẩy kéo, phát xung 50 µs
-     * rồi tự về thấp. Không cần đọc INT_STATUS để xoá cờ, hợp với EXTI4 bắt
-     * sườn lên và điện trở kéo xuống trên PC4.
+     * INT1: xung (không chốt), đẩy kéo, tích cực mức cao — hợp với EXTI4 bắt
+     * sườn lên và điện trở kéo xuống trên PC4, giống ICM-20602.
+     *
+     * INT_CONFIG1 = 0x60: xung 8 µs + TDEASSERT_DISABLE (bắt buộc ở ODR >= 4 kHz),
+     * INT_ASYNC_RESET = 0 (datasheet yêu cầu xoá thì chân INT mới chạy đúng).
+     *
+     * INT_SOURCE0 = 0x08: chỉ UI_DRDY lên INT1 (mặc định còn RESET_DONE).
      */
-    if (!reg_write_verify(ICM_REG_INT_PIN_CFG, 0x00u) ||
-        !reg_write_verify(ICM_REG_INT_ENABLE,  0x01u)) {     /* DATA_RDY_INT_EN */
+    if (!reg_write_verify(ICM42_REG_INT_CONFIG,  0x03u) ||
+        !reg_write_verify(ICM42_REG_INT_CONFIG1, 0x60u) ||
+        !reg_write_verify(ICM42_REG_INT_SOURCE0, 0x08u)) {
         goto fail;
+    }
+
+    /*
+     * Bật gyro và accel ở chế độ low-noise. Datasheet: sau lệnh này không ghi
+     * thanh ghi nào trong 200 µs, và gyro cần ~30 ms mới ra số đúng.
+     */
+    if (!reg_write(ICM42_REG_PWR_MGMT0, 0x0Fu)) {
+        goto fail;
+    }
+    HAL_Delay(50);
+    {
+        uint8_t pwr = 0;
+        if (!reg_read(ICM42_REG_PWR_MGMT0, &pwr) || pwr != 0x0Fu) {
+            goto fail;
+        }
     }
 
     /* Xong phần cấu hình, chuyển sang 8 MHz cho đường dữ liệu. */
@@ -339,10 +410,10 @@ bool icm20602_init(void)
     /* Xoá cờ ngắt còn treo trước khi cho phép DRDY. */
     {
         uint8_t dummy = 0;
-        (void)reg_read(ICM_REG_INT_STATUS, &dummy);
+        (void)reg_read(ICM42_REG_INT_STATUS, &dummy);
     }
 
-    s_tx[0] = (uint8_t)(ICM_REG_ACCEL_XOUT_H | ICM_SPI_READ_BIT);
+    s_tx[0] = (uint8_t)(ICM42_REG_TEMP_DATA1 | ICM42_SPI_READ_BIT);
 
     g_fc.imu.calibrated = false;
     g_fc.imu.healthy    = false;
@@ -356,7 +427,7 @@ fail:
     return false;
 }
 
-void icm20602_start(void)
+void icm42688_start(void)
 {
     if (s_state == ICM_STATE_IDLE) {
         s_prev_sample_us = micros();
@@ -364,23 +435,28 @@ void icm20602_start(void)
     }
 }
 
-void icm20602_stop(void)
+void icm42688_stop(void)
 {
     if (s_state == ICM_STATE_RUNNING || s_state == ICM_STATE_CALIBRATING) {
         s_state = ICM_STATE_IDLE;
     }
 }
 
-icm20602_state_t icm20602_get_state(void)
+icm42688_state_t icm42688_get_state(void)
 {
     return s_state;
+}
+
+uint8_t icm42688_who_am_i(void)
+{
+    return s_who_am_i;
 }
 
 /* ==========================================================================
  * Hiệu chuẩn bias gyro
  * ========================================================================== */
 
-void icm20602_start_gyro_calibration(void)
+void icm42688_start_gyro_calibration(void)
 {
     if (s_state != ICM_STATE_RUNNING && s_state != ICM_STATE_CALIBRATING) {
         return;
@@ -393,7 +469,7 @@ void icm20602_start_gyro_calibration(void)
     s_state = ICM_STATE_CALIBRATING;
 }
 
-uint8_t icm20602_calibration_progress(void)
+uint8_t icm42688_calibration_progress(void)
 {
     if (s_state != ICM_STATE_CALIBRATING) {
         return g_fc.imu.calibrated ? 100u : 0u;
@@ -446,7 +522,7 @@ static void calibration_feed(const float gyro[AXIS_COUNT])
  * Xử lý một mẫu
  * ========================================================================== */
 
-/** Đọc số nguyên 16-bit có dấu, kiểu big-endian như chip xuất ra. */
+/** Đọc số nguyên 16-bit có dấu, big-endian (INTF_CONFIG0 mặc định). */
 static inline int16_t be16(const uint8_t *p)
 {
     return (int16_t)(((uint16_t)p[0] << 8) | p[1]);
@@ -469,20 +545,25 @@ static inline void align_axes(const float in[3], float out[3])
 
 static void process_sample(void)
 {
-    /* --- Tách dữ liệu thô (byte 0 là byte rác ứng với lúc gửi địa chỉ) --- */
-    const int16_t ax_raw = be16(&s_rx[1]);
-    const int16_t ay_raw = be16(&s_rx[3]);
-    const int16_t az_raw = be16(&s_rx[5]);
-    const int16_t t_raw  = be16(&s_rx[7]);
+    /*
+     * Tách dữ liệu thô (byte 0 là byte rác ứng với lúc gửi địa chỉ).
+     * Thứ tự của ICM-42688: NHIỆT ĐỘ trước, rồi accel, rồi gyro.
+     */
+    const int16_t t_raw  = be16(&s_rx[1]);
+    const int16_t ax_raw = be16(&s_rx[3]);
+    const int16_t ay_raw = be16(&s_rx[5]);
+    const int16_t az_raw = be16(&s_rx[7]);
     const int16_t gx_raw = be16(&s_rx[9]);
     const int16_t gy_raw = be16(&s_rx[11]);
     const int16_t gz_raw = be16(&s_rx[13]);
 
     /*
-     * Toàn bộ giá trị bằng 0 hoặc bằng 0xFFFF thường là dấu hiệu mất kết nối
-     * (MISO treo cao hoặc thấp) chứ không phải số đo thật.
+     * Toàn bộ bằng 0 thường là MISO treo thấp (mất kết nối). Gyro bằng đúng
+     * -32768 cả ba trục là cách ICM-42688 báo "chưa có số hợp lệ" (cảm biến
+     * đang khởi động hoặc bị tắt).
      */
-    if ((gx_raw | gy_raw | gz_raw | ax_raw | ay_raw | az_raw) == 0) {
+    if ((gx_raw | gy_raw | gz_raw | ax_raw | ay_raw | az_raw) == 0 ||
+        (gx_raw == INT16_MIN && gy_raw == INT16_MIN && gz_raw == INT16_MIN)) {
         g_fc.imu.error_count++;
         return;
     }
@@ -563,7 +644,7 @@ static void process_sample(void)
  * Hàm gọi từ ngắt
  * ========================================================================== */
 
-void icm20602_drdy_isr(void)
+void icm42688_drdy_isr(void)
 {
     if (s_state != ICM_STATE_RUNNING && s_state != ICM_STATE_CALIBRATING) {
         return;
@@ -582,11 +663,11 @@ void icm20602_drdy_isr(void)
 
     s_busy      = true;
     s_sample_us = micros();
-    s_tx[0]     = (uint8_t)(ICM_REG_ACCEL_XOUT_H | ICM_SPI_READ_BIT);
+    s_tx[0]     = (uint8_t)(ICM42_REG_TEMP_DATA1 | ICM42_SPI_READ_BIT);
 
     CS_LOW();
     if (HAL_SPI_TransmitReceive_DMA(&hspi1, s_tx, s_rx,
-                                    1u + ICM_BURST_DATA_LEN) != HAL_OK) {
+                                    1u + ICM42_BURST_DATA_LEN) != HAL_OK) {
         CS_HIGH();
         s_busy = false;
         g_fc.imu.error_count++;
@@ -594,14 +675,14 @@ void icm20602_drdy_isr(void)
     }
 }
 
-void icm20602_spi_complete_isr(void)
+void icm42688_spi_complete_isr(void)
 {
     CS_HIGH();
     s_busy = false;
     process_sample();
 }
 
-void icm20602_spi_error_isr(void)
+void icm42688_spi_error_isr(void)
 {
     CS_HIGH();
     HAL_SPI_Abort(&hspi1);
@@ -616,7 +697,7 @@ void icm20602_spi_error_isr(void)
  * Nền nhiễu — công cụ của giai đoạn 2
  * ========================================================================== */
 
-float icm20602_gyro_sigma_dps(void)
+float icm42688_gyro_sigma_dps(void)
 {
 #if IMU_NOISE_STATS_ENABLE
     return imu_noise_sigma_max(&s_noise);
@@ -625,7 +706,7 @@ float icm20602_gyro_sigma_dps(void)
 #endif
 }
 
-vec3f_t icm20602_gyro_sigma_axes_dps(void)
+vec3f_t icm42688_gyro_sigma_axes_dps(void)
 {
 #if IMU_NOISE_STATS_ENABLE
     return (vec3f_t){ s_noise.sigma[0], s_noise.sigma[1], s_noise.sigma[2] };

@@ -8,6 +8,7 @@
 #include "hmc5883.h"
 #include "qmc5883.h"
 #include "qmc5883p.h"
+#include "ist8310.h"
 #include "fc_state.h"
 #include "param_table.h"
 #include "fc_time.h"
@@ -46,6 +47,15 @@ static uint8_t  s_data_base_reg;   /* thanh ghi dau khoi 6 byte du lieu   */
 static uint8_t  s_burst_len;       /* so byte doc moi luot                */
 static uint8_t  s_status_idx;      /* vi tri byte STATUS trong s_buf      */
 static float    s_lsb_per_gauss;
+
+/*
+ * Rieng IST8310: chip chi do DON, nen sau moi luot doc phai ghi lai lenh do.
+ * Lenh ghi [CNTL1, 0x01] chay bang ngat nhu luot doc, nen s_cmd phai song toi
+ * khi ngat xong.
+ */
+static volatile bool s_need_trigger;
+static uint8_t       s_ist_stale_run;  /* so luot doc lien tiep chua co mau moi */
+static uint8_t       s_cmd[2] = { IST8310_REG_CNTL1, IST8310_CNTL1_SINGLE };
 
 /* ==========================================================================
  * Truy cập thanh ghi ở chế độ hỏi vòng (chỉ dùng lúc init)
@@ -218,6 +228,57 @@ static bool init_qmc5883p(void)
     return true;
 }
 
+#if MAG_I2C_USE_GPS_MAG
+/*
+ * IST8310 tren module GPS. Thu tu theo driver PX4: dat lai mem, xac nhan
+ * WAI, trung binh 16 lan, do rong xung chuan, roi ra lenh do dau tien.
+ * Chip co dinh mot dai do nen bo qua g_params.mag_range_g.
+ */
+static bool init_ist8310(void)
+{
+    uint8_t id = 0;
+
+    if (!reg_read(IST8310_REG_WAI, &id, 1u) || id != IST8310_WAI_VALUE) {
+        return false;
+    }
+    if (!reg_write(IST8310_REG_CNTL2, IST8310_CNTL2_SRST)) {
+        return false;
+    }
+    HAL_Delay(10);
+
+    if (!reg_read(IST8310_REG_WAI, &id, 1u) || id != IST8310_WAI_VALUE ||
+        !reg_write_verify(IST8310_REG_AVGCNTL, IST8310_AVGCNTL_16X) ||
+        !reg_write_verify(IST8310_REG_PDCNTL, IST8310_PDCNTL_NORMAL) ||
+        !reg_write(IST8310_REG_CNTL1, IST8310_CNTL1_SINGLE)) {
+        return false;
+    }
+
+    s_lsb_per_gauss = IST8310_LSB_PER_GAUSS;
+    s_variant       = MAG_I2C_VARIANT_IST8310;
+    s_data_base_reg = IST8310_REG_STAT1;
+    s_burst_len     = IST8310_BURST_LEN;
+    s_status_idx    = IST8310_BURST_STATUS_IDX;
+    return true;
+}
+
+/** Thu dung mot dia chi: co tra loi thi khoi tao, xong thi chay. */
+static bool try_addr(uint8_t addr7, bool (*init_fn)(void), uint8_t chip_id)
+{
+    if (HAL_I2C_IsDeviceReady(&hi2c1, MAG_I2C_HAL_ADDR(addr7), 3u,
+                              MAG_I2C_TIMEOUT_MS) != HAL_OK) {
+        return false;
+    }
+    s_hal_addr = MAG_I2C_HAL_ADDR(addr7);
+    if (!init_fn()) {
+        return false;
+    }
+    g_fc.mag.chip_id = chip_id;
+    s_state = MAG_I2C_STATE_RUNNING;
+    s_last_poll_us = micros();
+    return true;
+}
+#endif /* MAG_I2C_USE_GPS_MAG */
+
 bool mag_i2c_init(void)
 {
     s_state         = MAG_I2C_STATE_UNINIT;
@@ -232,6 +293,8 @@ bool mag_i2c_init(void)
     s_lsb_per_gauss = 1.0f;
     s_burst_len     = 0;
     s_status_idx    = 0;
+    s_need_trigger  = false;
+    s_ist_stale_run = 0;
 
     memset(s_buf, 0, sizeof(s_buf));
 
@@ -258,6 +321,20 @@ bool mag_i2c_init(void)
 
     /* Chip can toi da vai ms ke tu luc co nguon moi tra loi duoc. */
     HAL_Delay(5);
+
+#if MAG_I2C_USE_GPS_MAG
+    /*
+     * CHI do IST8310, KHONG lui ve chip tren bo khi khong thay. Bo tham so
+     * mag_offset_* / mag_scale_* / mag_axis_* thuoc ve DUNG MOT chip; lui
+     * ve chip khac luc day GPS long ra se chay voi hieu chuan cua chip kia
+     * va keo yaw sai mot cach tu tin — te hon la khong co tu ke.
+     */
+    if (try_addr(IST8310_I2C_ADDR_7BIT, init_ist8310, IST8310_WAI_VALUE) ||
+        try_addr(IST8310_I2C_ADDR_ALT_7BIT, init_ist8310, IST8310_WAI_VALUE)) {
+        return true;
+    }
+    goto fail;
+#endif
 
     if (HAL_I2C_IsDeviceReady(&hi2c1, MAG_I2C_HAL_ADDR(HMC_I2C_ADDR_7BIT), 3u,
                               MAG_I2C_TIMEOUT_MS) == HAL_OK) {
@@ -318,7 +395,18 @@ static bool process_sample(void)
     int16_t rx, ry, rz;
     bool overflow;
 
-    if (s_variant == MAG_I2C_VARIANT_HMC5883L) {
+    if (s_variant == MAG_I2C_VARIANT_IST8310) {
+        /*
+         * STAT1 o byte 0, du lieu LSB truoc tu byte 1. Dao Z de he truc tay
+         * TRAI cua chip (X toi, Y phai, Z len) thanh tay phai — xem ist8310.h.
+         * -32768 khong dao duoc trong int16 nen chan ve 32767.
+         */
+        rx = (int16_t)(((uint16_t)s_buf[2] << 8) | s_buf[1]);
+        ry = (int16_t)(((uint16_t)s_buf[4] << 8) | s_buf[3]);
+        const int16_t z_chip = (int16_t)(((uint16_t)s_buf[6] << 8) | s_buf[5]);
+        rz = (z_chip == INT16_MIN) ? INT16_MAX : (int16_t)(-z_chip);
+        overflow = false;
+    } else if (s_variant == MAG_I2C_VARIANT_HMC5883L) {
         /* MSB truoc, thu tu THANH GHI la X, Z, Y (khong phai X,Y,Z). */
         rx = (int16_t)(((uint16_t)s_buf[0] << 8) | s_buf[1]);
         rz = (int16_t)(((uint16_t)s_buf[2] << 8) | s_buf[3]);
@@ -355,10 +443,17 @@ static bool process_sample(void)
      * nguon khong lam hong duong xu ly phia sau. Bo so nay phai do lai cho
      * dung module vua lap - xem GD4 trong App/Docs/KE_HOACH_LA_BAN_I2C.md.
      */
+    /*
+     * cal = S (raw - offset), S doi xung: duong cheo mag_scale_*, ngoai duong
+     * cheo mag_soft_* (2026-09-22). mag_soft_* = 0 thi dung nhu ban thang truc.
+     */
+    const float dx = sensor_g.x - g_params.mag_offset_x_g;
+    const float dy = sensor_g.y - g_params.mag_offset_y_g;
+    const float dz = sensor_g.z - g_params.mag_offset_z_g;
     const float cal[3] = {
-        (sensor_g.x - g_params.mag_offset_x_g) * g_params.mag_scale_x,
-        (sensor_g.y - g_params.mag_offset_y_g) * g_params.mag_scale_y,
-        (sensor_g.z - g_params.mag_offset_z_g) * g_params.mag_scale_z
+        g_params.mag_scale_x * dx + g_params.mag_soft_xy * dy + g_params.mag_soft_xz * dz,
+        g_params.mag_soft_xy * dx + g_params.mag_scale_y * dy + g_params.mag_soft_yz * dz,
+        g_params.mag_soft_xz * dx + g_params.mag_soft_yz * dy + g_params.mag_scale_z * dz
     };
 
     /* --- Roi moi xoay sang he than --- */
@@ -421,6 +516,46 @@ bool mag_i2c_update(uint32_t now_us)
     if (s_new_raw) {
         s_new_raw  = false;
         got_sample = process_sample();
+        /*
+         * IST8310: ra lenh do khi vua lay duoc mau moi. Mau cu nghia la chip
+         * con dang do — ra lenh luc do chi bat no do lai tu dau.
+         *
+         * Nhung neu lenh truoc bi mat (thua bus, loi I2C) thi chip dung im
+         * mai, nen cu 5 luot doc (100 ms) lien tiep khong co mau moi thi ra
+         * lenh lai.
+         */
+        if (s_variant == MAG_I2C_VARIANT_IST8310) {
+            if (got_sample) {
+                s_ist_stale_run = 0;
+                s_need_trigger  = true;
+            } else if (++s_ist_stale_run >= 5u) {
+                s_ist_stale_run = 0;
+                s_need_trigger  = true;
+            }
+        }
+    }
+
+    /*
+     * Lenh do cua IST8310. Thua bus (BMP388 dang truyen) thi giu co va thu
+     * lai o vong lap ke tiep, giong luot doc. Chua gui duoc lenh thi khong
+     * doc — doc luc nay chi ra mau cu.
+     */
+    if (s_need_trigger && !s_busy) {
+        /*
+         * Moc la now_us, KHONG phai micros(): phep kiem timeout ngay ben duoi
+         * tinh now_us - s_xfer_start_us trong CUNG lan goi nay. Lay micros()
+         * (muon hon now_us) thi hieu so am, thanh so khong dau khong lo, va
+         * luot ghi bi huy ngay sau khi phat START — da gap that 2026-09-21:
+         * 4/5 lenh do bi huy, mau tu ke dung im.
+         */
+        s_xfer_start_us = now_us;
+        s_busy          = true;
+        if (HAL_I2C_Master_Transmit_IT(&hi2c1, s_hal_addr, s_cmd, 2u) == HAL_OK) {
+            s_need_trigger = false;
+        } else {
+            s_busy = false;
+            s_bus_lost++;
+        }
     }
 
     /* Luot truyen treo - huy de giai phong ngoai vi, thu lai lan sau. */
@@ -444,7 +579,7 @@ bool mag_i2c_update(uint32_t now_us)
      * (duoi 1 ms sau), luc do bus gan nhu chac chan da ranh - vua pha vo
      * khoa pha vua bien mot khoang trong 20 ms thanh khong dang ke.
      */
-    if (!s_busy && !s_new_raw &&
+    if (!s_busy && !s_new_raw && !s_need_trigger &&
         fc_elapsed_us(now_us, s_last_poll_us) >= MAG_I2C_POLL_PERIOD_US) {
         if (start_read()) {
             s_last_poll_us = now_us;
@@ -467,7 +602,14 @@ const char *mag_i2c_variant_name(void)
     case MAG_I2C_VARIANT_HMC5883L: return "HMC5883L @ 0x1E";
     case MAG_I2C_VARIANT_QMC5883L: return "QMC5883L @ 0x0D";
     case MAG_I2C_VARIANT_QMC5883P: return "QMC5883P @ 0x2C";
+    case MAG_I2C_VARIANT_IST8310:
+        return (s_hal_addr == MAG_I2C_HAL_ADDR(IST8310_I2C_ADDR_7BIT))
+               ? "IST8310 @ 0x0E (la ban tren GPS)" : "IST8310 @ 0x0C (la ban tren GPS)";
+#if MAG_I2C_USE_GPS_MAG
+    default:                       return "khong tim thay IST8310 (0x0E, 0x0C deu khong tra loi)";
+#else
     default:                       return "khong tim thay (0x1E, 0x0D, 0x2C deu khong tra loi)";
+#endif
     }
 }
 
@@ -488,6 +630,11 @@ void mag_i2c_complete_isr(void)
     s_rx_us   = micros();
     s_busy    = false;
     s_new_raw = true;
+}
+
+void mag_i2c_write_complete_isr(void)
+{
+    s_busy = false;
 }
 
 void mag_i2c_error_isr(void)
@@ -519,12 +666,12 @@ void mag_i2c_scan_dump(void)
          */
         const char *who = "?";
         switch (addr) {
-        case 0x0Cu: who = "IST8310 hoac AK8975 (tu ke khac, chua co driver)"; break;
+        case 0x0Cu: who = "IST8310 (dia chi phu) hoac AK8975";              break;
         case 0x0Du: who = "QMC5883L";                                        break;
-        case 0x0Eu: who = "IST8310 (dia chi phu)";                           break;
+        case 0x0Eu: who = "IST8310 - la ban tren GPS MG-F10-A";              break;
         case 0x1Cu: who = "LIS3MDL (chua co driver)";                        break;
         case 0x1Eu: who = "HMC5883L hoac LIS3MDL (dia chi phu)";             break;
-        case 0x2Cu: who = "QMC5883P - CO DRIVER, day la chip mong doi";       break;
+        case 0x2Cu: who = "QMC5883P - la ban tren bo";                       break;
         case 0x30u: who = "MMC5883MA (chua co driver)";                      break;
         case 0x76u: who = "BMP388 (SDO noi GND)";                            break;
         case 0x77u: who = "BMP388 - DOI CHUNG, bus va dien tro keo len OK";   break;
