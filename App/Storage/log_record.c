@@ -6,6 +6,8 @@
 #include "log_record.h"
 #include "fc_state.h"
 #include "ctrl_poshold.h"
+#include "ctrl_althold.h"
+#include "ekf_altitude.h"
 
 #include <math.h>
 
@@ -205,5 +207,7 @@ void log_record_fill(bb_record_t *r, uint32_t t_ms)
         (g_fc.est.attitude_valid ? LOG_EST_ATT_VALID   : 0u) |
         (g_fc.flow.healthy       ? LOG_EST_FLOW_OK     : 0u) |
         (g_fc.flow.range_valid   ? LOG_EST_RANGE_VALID : 0u) |
-        (ctrl_poshold_position_locked() ? LOG_EST_POS_LOCKED : 0u));
+        (ctrl_poshold_position_locked() ? LOG_EST_POS_LOCKED : 0u) |
+        (ekf_altitude_vibe_active()     ? LOG_EST_ALT_VIBE   : 0u) |
+        (ctrl_althold_sat_guard()       ? LOG_EST_SAT_GUARD  : 0u));
 }

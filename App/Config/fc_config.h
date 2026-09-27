@@ -638,6 +638,40 @@
  */
 #define ALTHOLD_TILT_COMP_MAX_DEG 35.0f
 
+/*
+ * Tốc độ HẠ tối đa khi kéo cần, tách khỏi althold_max_climb_mps (vẫn dùng cho leo).
+ *
+ * Vụ rơi 2026-09-23: kéo cần xuống đòi hạ 2-3 m/s, ga cắt 0,46 -> 0,10 trong 0,1 s,
+ * rơi 0,85 m; lúc hãm lại ga vọt lên 0,85 và mở màn dao động pitch. Hạ chậm thì cả
+ * cú cắt lẫn cú hãm đều nhẹ.
+ */
+#define ALTHOLD_MAX_DESCENT_MPS 1.5f
+
+/*
+ * Giới hạn gia tốc của tốc độ lên MONG MUỐN (m/s²). Cần ga bật từ giữa xuống đáy thì
+ * mục tiêu trượt dần tới thay vì nhảy bậc — vòng trong không nhận cú sai số bậc thang
+ * nào để khuếch đại thành cú giật ga.
+ *
+ * Không giới hạn tốc độ đổi GA: đó là thêm trễ vào vòng trong, và cú cắt ga trong vụ
+ * rơi chỉ 3,6 /s — nằm trong dải bình thường (p99 bay thường 2-4 /s).
+ */
+#define ALTHOLD_CLIMB_ACCEL_MPS2 3.0f
+
+/*
+ * Chặn ga khi mixer bão hoà kéo dài.
+ *
+ * Bão hoà nhiều nghĩa là máy bay đang dao động hoặc mất điều khiển tư thế; đẩy thêm ga
+ * chỉ làm nặng thêm (vụ rơi 2026-09-23: ghim 0,85 suốt 1,8 s, vọt lên ~7,5 m). Tỉ lệ
+ * bão hoà lọc 0,3 s: bay thường 0, dao động 09-21 lên 0,30, vụ rơi 0,66.
+ *
+ * Vượt ngưỡng thì CHỐT: trần ga hạ về ga treo đã học (hover + tích phân), và đòi hạ
+ * ALTHOLD_SAT_GUARD_DESCENT_MPS bất kể cần ga. Chỉ gỡ khi rời chế độ giữ độ cao — gạt
+ * về ANGLE là lấy lại toàn quyền ga.
+ */
+#define ALTHOLD_SAT_GUARD_TAU_S        0.3f
+#define ALTHOLD_SAT_GUARD_FRAC         0.25f
+#define ALTHOLD_SAT_GUARD_DESCENT_MPS  0.5f
+
 /* ==========================================================================
  * Điều khiển từ xa (CRSF / ELRS 2.4G trên USART2 @ 420000)
  * ========================================================================== */
@@ -1397,6 +1431,39 @@
 #define EST_RANGE_STEP_M     0.30f
 #define EST_RANGE_STEP_N     10u
 #define EST_RANGE_STEP_TOL_M 0.05f
+
+/*
+ * Laser lệch ước lượng LIÊN TỤC mà vẫn đều đặn thì ước lượng sai, không phải laser.
+ *
+ * Vụ rơi 2026-09-23: accel hỏng vì rung, độ cao ước lượng trôi xuống -9 m trong khi
+ * laser đọc đều 1 -> 7,5 m (máy bay đang vọt LÊN). Cổng 0,3 m loại mọi mẫu, còn neo
+ * lại cần 10 mẫu nằm trong ±5 cm — không bao giờ đạt khi đang leo 5 m/s.
+ *
+ * Nay: bị cổng loại liên tục EST_RANGE_DIVERGE_MS mà các mẫu nối nhau trơn (mỗi mẫu
+ * nhảy không quá EST_RANGE_DIVERGE_JUMP_M) thì neo độ cao về laser, và lấy tốc độ lên
+ * bằng độ dốc của laser suốt quãng đó. Mẫu nhảy lung tung (vật lướt qua, cỏ) thì bắt
+ * đầu đếm lại. Hở quá EST_RANGE_DIVERGE_GAP_MS không có mẫu cũng đếm lại, vì độ dốc
+ * qua chỗ hở không đáng tin.
+ */
+#define EST_RANGE_DIVERGE_MS      300u
+#define EST_RANGE_DIVERGE_GAP_MS  100u
+#define EST_RANGE_DIVERGE_JUMP_M  0.15f   /* 100 Hz -> 15 m/s, nhanh hơn mọi lần bay thật */
+#define EST_RANGE_DIVERGE_VEL_VAR 0.25f   /* (m/s)^2 cho tốc độ lấy từ độ dốc laser */
+
+/*
+ * Rung mạnh thì BỎ gia tốc kế khỏi EKF độ cao.
+ *
+ * Vụ rơi 2026-09-23: dao động pitch ±790 °/s làm accel trung bình lệch ~1,6 g, EKF tích
+ * phân ra rơi -9 m/s trong khi máy bay đang leo. Đo RMS gia tốc lên (lọc 0,1 s): bay
+ * thường <= 4 m/s², chạm đất 14 thoáng qua, vụ rơi 35.
+ *
+ * Quá ngưỡng thì dự báo coi gia tốc bằng 0 (mô hình tốc độ không đổi) với nhiễu quá
+ * trình lớn — baro và laser gánh thay. Giữ thêm EST_ALT_VIBE_HOLD_MS sau khi hết rung.
+ */
+#define EST_ALT_VIBE_TAU_S          0.1f
+#define EST_ALT_VIBE_RMS_MPS2       8.0f
+#define EST_ALT_VIBE_HOLD_MS        500u
+#define EST_ALT_VIBE_ACC_NOISE_MPS2 5.0f
 
 /* --- Ước lượng vận tốc ngang từ optical flow ----------------------------
  *

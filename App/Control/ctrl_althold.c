@@ -36,6 +36,8 @@ static float s_prev_climb;      /* cho khâu vi phân               */
 static float s_dterm;           /* đạo hàm đã lọc                 */
 static bool  s_primed;          /* đã có mẫu trước để lấy đạo hàm */
 static float s_reset_seen;      /* altitude_reset_sum_m đã áp vào mốc */
+static float s_sat_frac;        /* tỉ lệ bão hoà đã lọc, 0..1     */
+static bool  s_sat_guard;       /* đã chốt chặn ga vì bão hoà     */
 
 /**
  * Phần lực đẩy theo phương THẲNG ĐỨNG trên mỗi đơn vị ga: cos(roll)·cos(pitch),
@@ -59,6 +61,8 @@ void ctrl_althold_reset(void)
     s_prev_climb   = 0.0f;
     s_dterm        = 0.0f;
     s_primed       = false;
+    s_sat_frac     = 0.0f;
+    s_sat_guard    = false;
 }
 
 void ctrl_althold_init(void)
@@ -125,6 +129,7 @@ bool ctrl_althold_update(float dt, float *throttle_out)
     /* Cần ga quy về [-1, +1] quanh điểm giữa — xem stick_dev(). */
     const float dev = stick_dev();
     const float db  = g_params.althold_stick_deadband;
+    float       want;           /* tốc độ lên đòi ở nhịp này, trước giới hạn gia tốc */
 
     if (ctrl_offboard_is_active() && fabsf(dev) <= db) {
         /*
@@ -132,15 +137,15 @@ bool ctrl_althold_update(float dt, float *throttle_out)
          * nhúng đặt. Mốc độ cao bám theo chỗ hiện tại, nên lúc rời OFFBOARD
          * là chốt ngay tại đó chứ không bò về độ cao cũ.
          */
-        s_climb_target = ctrl_offboard_climb_mps();
-        s_target_m     = alt;
+        want       = ctrl_offboard_climb_mps();
+        s_target_m = alt;
     } else if (fabsf(dev) <= db) {
         /*
          * Cần ở giữa: GIỮ. Sai số độ cao đổi ra tốc độ lên mong muốn bằng
          * khâu P, rồi kẹp lại — không có kẹp thì lệch 10 m sẽ đòi một tốc độ
          * lên mà máy bay không thể đạt, và tích phân dồn trong lúc đó.
          */
-        s_climb_target = fc_constrainf(
+        want = fc_constrainf(
             g_params.althold_alt_kp * (s_target_m - alt),
             -g_params.althold_max_climb_mps,
              g_params.althold_max_climb_mps);
@@ -166,13 +171,35 @@ bool ctrl_althold_update(float dt, float *throttle_out)
         const float mag  = (fabsf(dev) - db) / ((1.0f - db) > 0.01f
                                                 ? (1.0f - db) : 0.01f);
 
-        s_climb_target = sign * mag * g_params.althold_max_climb_mps;
+        want = sign * mag * g_params.althold_max_climb_mps;
 
         /*
          * Mốc BÁM THEO độ cao hiện tại trong lúc đang đẩy cần. Thả cần ra là
          * chốt ngay tại chỗ vừa tới — xem ghi chú ở header.
          */
         s_target_m = alt;
+    }
+
+    /*
+     * Bão hoà kéo dài: chốt chặn ga và hạ từ từ, bất kể cần — xem
+     * ALTHOLD_SAT_GUARD_FRAC. Mốc bám theo chỗ hiện tại như lúc đẩy cần.
+     */
+    s_sat_frac += (dt / (ALTHOLD_SAT_GUARD_TAU_S + dt)) *
+                  ((mixer_saturated() ? 1.0f : 0.0f) - s_sat_frac);
+    if (s_sat_frac > ALTHOLD_SAT_GUARD_FRAC) {
+        s_sat_guard = true;
+    }
+    if (s_sat_guard) {
+        want       = -ALTHOLD_SAT_GUARD_DESCENT_MPS;
+        s_target_m = alt;
+    }
+
+    /* Hạ chậm hơn leo (ALTHOLD_MAX_DESCENT_MPS), và mục tiêu không nhảy bậc
+     * (ALTHOLD_CLIMB_ACCEL_MPS2). */
+    want = fmaxf(want, -ALTHOLD_MAX_DESCENT_MPS);
+    {
+        const float step = ALTHOLD_CLIMB_ACCEL_MPS2 * dt;
+        s_climb_target += fc_constrainf(want - s_climb_target, -step, step);
     }
 
     /* ================= Vòng trong: PID trên tốc độ lên ==================== */
@@ -224,8 +251,15 @@ bool ctrl_althold_update(float dt, float *throttle_out)
      */
     thr /= tilt_cos();
 
-    *throttle_out = fc_constrainf(thr, g_params.althold_thr_min,
-                                       g_params.althold_thr_max);
+    /* Chặn vì bão hoà: không vượt ga treo đã học — đẩy thêm ga chỉ nuôi dao
+     * động. Tích phân đã đóng băng lúc bão hoà nên hover + I vẫn là số trước
+     * khi hỏng. */
+    float thr_max = g_params.althold_thr_max;
+    if (s_sat_guard) {
+        thr_max = fminf(thr_max, (g_params.althold_hover_thr + s_integral) / tilt_cos());
+    }
+
+    *throttle_out = fc_constrainf(thr, g_params.althold_thr_min, thr_max);
     return true;
 }
 
@@ -237,3 +271,4 @@ bool ctrl_althold_stick_centred(void)
 float ctrl_althold_target_m(void)     { return s_target_m; }
 float ctrl_althold_climb_target(void) { return s_climb_target; }
 float ctrl_althold_integral(void)     { return s_integral; }
+bool  ctrl_althold_sat_guard(void)    { return s_sat_guard; }

@@ -88,4 +88,7 @@ float ekf_altitude_reset_sum_m(void);
  */
 bool ekf_altitude_range_recent(uint32_t max_ms);
 
+/** true khi đang bỏ gia tốc kế vì rung — xem EST_ALT_VIBE_RMS_MPS2. */
+bool ekf_altitude_vibe_active(void);
+
 #endif /* EKF_ALTITUDE_H */

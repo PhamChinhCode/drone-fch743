@@ -22,6 +22,16 @@ static float    s_step_ref;             /* mức laser ứng viên, trung bình 
 static uint8_t  s_step_n;               /* số mẫu liên tiếp nằm quanh mức đó   */
 static float    s_reset_sum_m;          /* tổng các lần dời độ cao do neo lại  */
 
+static bool     s_div_active;           /* đang đếm chuỗi laser bị cổng loại   */
+static uint32_t s_div_t0_us;            /* đầu chuỗi                           */
+static uint32_t s_div_last_us;          /* mẫu gần nhất trong chuỗi            */
+static float    s_div_h0;               /* laser ở đầu chuỗi                   */
+static float    s_div_prev;             /* laser ở mẫu gần nhất                */
+
+static float    s_vibe_sq;              /* bình phương gia tốc lên, đã lọc     */
+static bool     s_vibe_seen;
+static uint32_t s_vibe_last_us;         /* lần gần nhất vượt ngưỡng rung       */
+
 /* ==========================================================================
  * Khởi tạo
  * ========================================================================== */
@@ -47,6 +57,10 @@ void ekf_altitude_init(void)
 
     s_step_n      = 0;
     s_reset_sum_m = 0.0f;
+
+    s_div_active = false;
+    s_vibe_sq    = 0.0f;
+    s_vibe_seen  = false;
 }
 
 /* ==========================================================================
@@ -59,7 +73,23 @@ void ekf_altitude_predict(float accel_up_mps2, float dt)
         return;
     }
 
-    const float a = accel_up_mps2 - s_x[ST_B];
+    /*
+     * Đo độ rung: RMS gia tốc lên. Rung quá ngưỡng thì accel không còn nói
+     * đúng gia tốc thật (xem EST_ALT_VIBE_RMS_MPS2) — bỏ nó, cả ở trạng thái
+     * lẫn ở F, để bias không bị các lần cập nhật kéo lệch theo.
+     */
+    const uint32_t now_us = micros();
+
+    s_vibe_sq += (dt / (EST_ALT_VIBE_TAU_S + dt)) *
+                 (accel_up_mps2 * accel_up_mps2 - s_vibe_sq);
+    if (s_vibe_sq > EST_ALT_VIBE_RMS_MPS2 * EST_ALT_VIBE_RMS_MPS2) {
+        s_vibe_seen    = true;
+        s_vibe_last_us = now_us;
+    }
+    const bool vibe = s_vibe_seen &&
+        fc_elapsed_us(now_us, s_vibe_last_us) < EST_ALT_VIBE_HOLD_MS * 1000u;
+
+    const float a = vibe ? 0.0f : accel_up_mps2 - s_x[ST_B];
 
     /* --- Trạng thái --- */
     s_x[ST_H] += s_x[ST_V] * dt + 0.5f * a * dt * dt;
@@ -71,11 +101,12 @@ void ekf_altitude_predict(float accel_up_mps2, float dt)
      *      [ 1  dt  -dt²/2 ]
      *  F = [ 0   1   -dt   ]
      *      [ 0   0    1    ]
-     * Cột thứ ba mang dấu âm vì bias bị TRỪ khỏi gia tốc.
+     * Cột thứ ba mang dấu âm vì bias bị TRỪ khỏi gia tốc. Lúc rung thì bias
+     * không vào phép tính nên cột đó bằng 0.
      */
     const float dt2 = dt * dt;
-    const float F02 = -0.5f * dt2;
-    const float F12 = -dt;
+    const float F02 = vibe ? 0.0f : -0.5f * dt2;
+    const float F12 = vibe ? 0.0f : -dt;
 
     float FP[ST_N][ST_N];
     for (int j = 0; j < ST_N; j++) {
@@ -96,7 +127,8 @@ void ekf_altitude_predict(float accel_up_mps2, float dt)
      * tương quan với nhau (cùng một nguồn), nên các số hạng chéo Q[0][1]
      * KHÔNG được bỏ — bỏ đi thì bộ lọc tự tin quá mức vào độ cao.
      */
-    const float sa2 = g_params.est_acc_z_noise_mps2 * g_params.est_acc_z_noise_mps2;
+    const float sa  = vibe ? EST_ALT_VIBE_ACC_NOISE_MPS2 : g_params.est_acc_z_noise_mps2;
+    const float sa2 = sa * sa;
     const float sb2 = g_params.est_acc_z_bias_walk * g_params.est_acc_z_bias_walk;
 
     Pn[0][0] += sa2 * dt2 * dt2 * 0.25f;
@@ -225,8 +257,48 @@ bool ekf_altitude_update_range(float range_m, float tilt_cos)
                       (y * y > EST_RANGE_GATE_SIGMA * EST_RANGE_GATE_SIGMA * S);
 
     if (!lost && !jump) {
-        s_step_n = 0;
+        s_step_n     = 0;
+        s_div_active = false;
         update_height(height, r);
+        s_range_last_used_us = now_us;
+        return true;
+    }
+
+    /*
+     * Laser bị loại LIÊN TỤC mà vẫn nối nhau trơn: ước lượng sai chứ không
+     * phải laser — xem EST_RANGE_DIVERGE_MS. Neo cả h lẫn v về laser, v lấy
+     * bằng độ dốc laser suốt chuỗi (neo kiểu "mất laser" đặt v = 0 thì khi
+     * đang leo nhanh laser lại vượt cổng ngay sau vài mẫu).
+     */
+    if (!s_div_active ||
+        fc_elapsed_us(now_us, s_div_last_us) > EST_RANGE_DIVERGE_GAP_MS * 1000u ||
+        fabsf(height - s_div_prev) > EST_RANGE_DIVERGE_JUMP_M)
+    {
+        s_div_active = true;
+        s_div_t0_us  = now_us;
+        s_div_h0     = height;
+    }
+    s_div_last_us = now_us;
+    s_div_prev    = height;
+
+    const uint32_t div_us = fc_elapsed_us(now_us, s_div_t0_us);
+    if (div_us >= EST_RANGE_DIVERGE_MS * 1000u) {
+        s_reset_sum_m += height - s_x[ST_H];
+        s_x[ST_H]      = height;
+        s_x[ST_V]      = (height - s_div_h0) / ((float)div_us * 1.0e-6f);
+
+        for (int i = 0; i < ST_N; i++) {
+            s_P[ST_H][i] = s_P[i][ST_H] = 0.0f;
+            s_P[ST_V][i] = s_P[i][ST_V] = 0.0f;
+        }
+        s_P[ST_H][ST_H] = r;
+        s_P[ST_V][ST_V] = EST_RANGE_DIVERGE_VEL_VAR;
+        s_P[ST_B][ST_B] = fmaxf(s_P[ST_B][ST_B], EST_RANGE_REANCHOR_BIAS_VAR);
+
+        s_div_active         = false;
+        s_step_n             = 0;
+        s_valid              = true;
+        s_range_used_once    = true;
         s_range_last_used_us = now_us;
         return true;
     }
@@ -274,6 +346,7 @@ bool ekf_altitude_update_range(float range_m, float tilt_cos)
     /* Bậc địa hình khi laser vẫn chạy: chỉ dời h, v và P vẫn đúng nên giữ nguyên. */
 
     s_step_n             = 0;
+    s_div_active         = false;
     s_valid              = true;
     s_range_used_once    = true;
     s_range_last_used_us = now_us;
@@ -294,6 +367,12 @@ bool ekf_altitude_range_recent(uint32_t max_ms)
 {
     return s_range_used_once &&
            fc_elapsed_us(micros(), s_range_last_used_us) <= max_ms * 1000u;
+}
+
+bool ekf_altitude_vibe_active(void)
+{
+    return s_vibe_seen &&
+           fc_elapsed_us(micros(), s_vibe_last_us) < EST_ALT_VIBE_HOLD_MS * 1000u;
 }
 
 float ekf_altitude_uncertainty_m(void)

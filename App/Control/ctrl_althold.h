@@ -78,6 +78,7 @@ bool ctrl_althold_update(float dt, float *throttle_out);
 float ctrl_althold_target_m(void);       /**< mốc độ cao đang giữ        */
 float ctrl_althold_climb_target(void);   /**< tốc độ lên mong muốn, m/s  */
 float ctrl_althold_integral(void);       /**< phần tích phân của ga      */
+bool  ctrl_althold_sat_guard(void);      /**< đang chặn ga vì bão hoà    */
 
 /**
  * Cần ga có đang nằm trong vùng chết quanh điểm giữa không.

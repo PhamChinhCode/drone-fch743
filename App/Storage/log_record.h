@@ -64,6 +64,8 @@ typedef struct __attribute__((packed)) {
 #define LOG_EST_FLOW_OK      0x08u  /**< driver MTF-01P còn sống         */
 #define LOG_EST_RANGE_VALID  0x10u
 #define LOG_EST_POS_LOCKED   0x20u  /**< poshold đã chốt mốc giữ chỗ     */
+#define LOG_EST_ALT_VIBE     0x40u  /**< EKF độ cao đang bỏ accel vì rung */
+#define LOG_EST_SAT_GUARD    0x80u  /**< ALTHOLD đang chặn ga vì bão hoà  */
 
 _Static_assert(sizeof(bb_record_t) == LOG_RECORD_BYTES,
                "ban ghi log phai dung 48 byte");
