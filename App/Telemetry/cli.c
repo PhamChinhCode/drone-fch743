@@ -17,6 +17,8 @@
 #include "qspi_flash.h"
 #include "flashlog.h"
 #include "gps_ubx.h"
+#include "vib_stream.h"
+#include "ctrl_rate.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -408,6 +410,7 @@ static void cmd_help(void)
     cli_out("  yawzero              chot moc do troi yaw (xem o mode 16)");
     cli_out("  port [uart|usb|here]  doi duong telemetry; here = duong vua gui lenh");
     cli_out("  flash [info|test|erase|rescan|dump|stop|sim <n>]  log tren QSPI W25Q64");
+    cli_out("  vib [on|off]         gyro+accel chua loc 8 kHz qua USB (can port usb)");
 }
 
 static void cmd_version(void)
@@ -527,6 +530,8 @@ static void cmd_status(void)
     cli_out_int("loop_time_us", (int32_t)g_fc.sys.loop_time_us);
     cli_out_int("loop_max_us", (int32_t)g_fc.sys.loop_time_max_us);
     cli_out_int("loop_overruns", (int32_t)g_fc.sys.loop_overruns);
+    cli_out_int("pid_hz", (int32_t)ctrl_rate_hz());          /* phai ~FC_LOOP_RATE_HZ */
+    cli_out_int("pid_skips", (int32_t)ctrl_rate_skips());
 
     /*
      * He so PID DANG CHAY, doc tu g_fc chu khong phai tu bang tham so.
@@ -1038,6 +1043,30 @@ static void cmd_port(const char *args)
     }
 }
 
+static void cmd_vib(const char *args)
+{
+    if (args == NULL || *args == '\0') {
+        cli_out(vib_stream_enabled() ? "vib = on" : "vib = off");
+        cli_out_int("khung da gui", (int32_t)vib_stream_frames_sent());
+        cli_out_int("mau firmware bo", (int32_t)vib_stream_ring_drops());
+        cli_out_int("khung tlm_port bo", (int32_t)tlm_port_dropped());
+        return;
+    }
+
+    if (strcmp(args, "on") == 0) {
+        if (!vib_stream_start()) {
+            cli_out("ERR: can 'port usb' (hoac 'port here' qua USB) truoc");
+            return;
+        }
+        cli_out("vib = on (TLM_MSG_VIB 0x11, 8 kHz, 16 mau/khung)");
+    } else if (strcmp(args, "off") == 0) {
+        vib_stream_stop();
+        cli_out("vib = off");
+    } else {
+        cli_out("ERR: chi nhan 'on' hoac 'off'");
+    }
+}
+
 static void cmd_save(void)
 {
     const param_store_result_t res = param_store_save();
@@ -1108,6 +1137,7 @@ bool cli_execute_ex(const char *line, const cli_sink_t *sink)
     if (strcmp(p, "mode") == 0)     { cmd_mode(args); return true; }
     if (strcmp(p, "port") == 0)     { cmd_port(args); return true; }
     if (strcmp(p, "flash") == 0)    { cmd_flash(args); return true; }
+    if (strcmp(p, "vib") == 0)      { cmd_vib(args);   return true; }
 
     if (strcmp(p, "yawzero") == 0) {
         dbg_console_yaw_zero();

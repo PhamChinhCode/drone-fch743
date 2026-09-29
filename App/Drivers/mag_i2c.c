@@ -15,7 +15,7 @@
 #include "dbg_console.h"
 #include "main.h"
 
-extern I2C_HandleTypeDef hi2c1;
+extern I2C_HandleTypeDef hi2c2;
 
 /* HAL nhận địa chỉ 8 bit, tức địa chỉ 7 bit đã dịch trái một nhịp. */
 #define MAG_I2C_HAL_ADDR(addr7)  ((uint16_t)((addr7) << 1))
@@ -63,13 +63,13 @@ static uint8_t       s_cmd[2] = { IST8310_REG_CNTL1, IST8310_CNTL1_SINGLE };
 
 static bool reg_write(uint8_t reg, uint8_t value)
 {
-    return (HAL_I2C_Mem_Write(&hi2c1, s_hal_addr, reg, I2C_MEMADD_SIZE_8BIT,
+    return (HAL_I2C_Mem_Write(&hi2c2, s_hal_addr, reg, I2C_MEMADD_SIZE_8BIT,
                               &value, 1u, MAG_I2C_TIMEOUT_MS) == HAL_OK);
 }
 
 static bool reg_read(uint8_t reg, uint8_t *dst, uint16_t len)
 {
-    return (HAL_I2C_Mem_Read(&hi2c1, s_hal_addr, reg, I2C_MEMADD_SIZE_8BIT,
+    return (HAL_I2C_Mem_Read(&hi2c2, s_hal_addr, reg, I2C_MEMADD_SIZE_8BIT,
                              dst, len, MAG_I2C_TIMEOUT_MS) == HAL_OK);
 }
 
@@ -264,7 +264,7 @@ static bool init_ist8310(void)
 /** Thu dung mot dia chi: co tra loi thi khoi tao, xong thi chay. */
 static bool try_addr(uint8_t addr7, bool (*init_fn)(void), uint8_t chip_id)
 {
-    if (HAL_I2C_IsDeviceReady(&hi2c1, MAG_I2C_HAL_ADDR(addr7), 3u,
+    if (HAL_I2C_IsDeviceReady(&hi2c2, MAG_I2C_HAL_ADDR(addr7), 3u,
                               MAG_I2C_TIMEOUT_MS) != HAL_OK) {
         return false;
     }
@@ -336,7 +336,7 @@ bool mag_i2c_init(void)
     goto fail;
 #endif
 
-    if (HAL_I2C_IsDeviceReady(&hi2c1, MAG_I2C_HAL_ADDR(HMC_I2C_ADDR_7BIT), 3u,
+    if (HAL_I2C_IsDeviceReady(&hi2c2, MAG_I2C_HAL_ADDR(HMC_I2C_ADDR_7BIT), 3u,
                               MAG_I2C_TIMEOUT_MS) == HAL_OK) {
         s_hal_addr = MAG_I2C_HAL_ADDR(HMC_I2C_ADDR_7BIT);
         if (init_hmc5883()) {
@@ -348,7 +348,7 @@ bool mag_i2c_init(void)
         goto fail;
     }
 
-    if (HAL_I2C_IsDeviceReady(&hi2c1, MAG_I2C_HAL_ADDR(QMC5883_I2C_ADDR_7BIT), 3u,
+    if (HAL_I2C_IsDeviceReady(&hi2c2, MAG_I2C_HAL_ADDR(QMC5883_I2C_ADDR_7BIT), 3u,
                               MAG_I2C_TIMEOUT_MS) == HAL_OK) {
         s_hal_addr = MAG_I2C_HAL_ADDR(QMC5883_I2C_ADDR_7BIT);
         if (init_qmc5883()) {
@@ -360,7 +360,7 @@ bool mag_i2c_init(void)
         goto fail;
     }
 
-    if (HAL_I2C_IsDeviceReady(&hi2c1, MAG_I2C_HAL_ADDR(QMC5883P_I2C_ADDR_7BIT), 3u,
+    if (HAL_I2C_IsDeviceReady(&hi2c2, MAG_I2C_HAL_ADDR(QMC5883P_I2C_ADDR_7BIT), 3u,
                               MAG_I2C_TIMEOUT_MS) == HAL_OK) {
         s_hal_addr = MAG_I2C_HAL_ADDR(QMC5883P_I2C_ADDR_7BIT);
         if (init_qmc5883p()) {
@@ -491,7 +491,7 @@ static bool start_read(void)
     s_xfer_start_us = micros();
     s_busy          = true;
 
-    if (HAL_I2C_Mem_Read_IT(&hi2c1, s_hal_addr, s_data_base_reg,
+    if (HAL_I2C_Mem_Read_IT(&hi2c2, s_hal_addr, s_data_base_reg,
                             I2C_MEMADD_SIZE_8BIT, s_buf,
                             (uint16_t)s_burst_len) != HAL_OK) {
         s_busy = false;
@@ -550,7 +550,7 @@ bool mag_i2c_update(uint32_t now_us)
          */
         s_xfer_start_us = now_us;
         s_busy          = true;
-        if (HAL_I2C_Master_Transmit_IT(&hi2c1, s_hal_addr, s_cmd, 2u) == HAL_OK) {
+        if (HAL_I2C_Master_Transmit_IT(&hi2c2, s_hal_addr, s_cmd, 2u) == HAL_OK) {
             s_need_trigger = false;
         } else {
             s_busy = false;
@@ -560,7 +560,7 @@ bool mag_i2c_update(uint32_t now_us)
 
     /* Luot truyen treo - huy de giai phong ngoai vi, thu lai lan sau. */
     if (s_busy && fc_elapsed_us(now_us, s_xfer_start_us) > MAG_I2C_XFER_TIMEOUT_US) {
-        (void)HAL_I2C_Master_Abort_IT(&hi2c1, s_hal_addr);
+        (void)HAL_I2C_Master_Abort_IT(&hi2c2, s_hal_addr);
         s_busy = false;
         record_error();
     }
@@ -651,10 +651,10 @@ void mag_i2c_scan_dump(void)
 {
     uint8_t found = 0;
 
-    dbg_println("  Quet bus I2C1 (0x08..0x77):");
+    dbg_println("  Quet bus I2C2 (0x08..0x77):");
 
     for (uint8_t addr = 0x08u; addr <= 0x77u; addr++) {
-        if (HAL_I2C_IsDeviceReady(&hi2c1, MAG_I2C_HAL_ADDR(addr), 1u, 5u) != HAL_OK) {
+        if (HAL_I2C_IsDeviceReady(&hi2c2, MAG_I2C_HAL_ADDR(addr), 1u, 5u) != HAL_OK) {
             continue;
         }
         found++;

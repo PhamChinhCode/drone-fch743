@@ -9,6 +9,7 @@
 
 #include "icm42688.h"
 #include "imu_noise.h"
+#include "vib_stream.h"
 #include "fc_state.h"
 #include "param_table.h"
 #include "fc_time.h"
@@ -607,6 +608,9 @@ static void process_sample(void)
     /* Nap gyro CHUA LOC - do moi la nhieu that. */
     imu_noise_feed(&s_noise, gyro, s_sample_us);
 #endif
+
+    /* Luồng rung 8 kHz qua USB, cũng lấy số CHƯA LỌC. Tắt thì chỉ tốn một phép kiểm cờ. */
+    vib_stream_push(&gyro, &accel, s_sample_us);
 
     /* --- Lọc thông thấp --- */
     s_gyro_lpf.x = fc_lpf(s_gyro_lpf.x, gyro.x, s_gyro_alpha);

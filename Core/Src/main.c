@@ -44,6 +44,7 @@
 #include "dbg_console.h"
 #include "tlm_port.h"
 #include "tlm_stream.h"
+#include "vib_stream.h"
 #include "mav_link.h"
 #include "param_msg.h"
 #include "blackbox.h"
@@ -75,7 +76,7 @@
 ADC_HandleTypeDef hadc1;
 ADC_HandleTypeDef hadc3;
 
-I2C_HandleTypeDef hi2c1;
+I2C_HandleTypeDef hi2c2;
 
 QSPI_HandleTypeDef hqspi;
 MDMA_HandleTypeDef hmdma_quadspi_fifo_th;
@@ -134,7 +135,7 @@ static void MX_MDMA_Init(void);
 static void MX_DMA_Init(void);
 static void MX_QUADSPI_Init(void);
 static void MX_SDMMC1_SD_Init(void);
-static void MX_I2C1_Init(void);
+static void MX_I2C2_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_UART4_Init(void);
@@ -259,7 +260,7 @@ int main(void)
   MX_SDMMC1_SD_Init();
   MX_FATFS_Init();
   MX_USB_DEVICE_Init();
-  MX_I2C1_Init();
+  MX_I2C2_Init();
   MX_SPI1_Init();
   MX_TIM1_Init();
   MX_UART4_Init();
@@ -785,122 +786,6 @@ int main(void)
     crsf_update();              /* rut byte tu dem DMA USART2 va phan tich */
     estimator_update(micros()); /* EKF: hop nhat gyro+accel+baro+laser   */
     arming_update(now_ms);      /* doc cong tac arm, quyet dinh arm/disarm  */
-    /*
-     * Nut K1 (PE3, keo len nen bam la muc THAP): moi lan bam quay thu motor
-     * ke tiep trong 1,5 giay o 8% ga. Bam khi dang quay thu thi dung ngay.
-     *
-     * THAO CANH QUAT truoc khi dung. dshot_motor_test_start() tu tu choi khi
-     * dang arm nen khong the vua bay vua quay thu.
-     */
-    {
-      static bool k1_prev = false;
-      static uint32_t k1_ms = 0;
-      // static uint8_t k1_next = 0;
-      static bool k1_seeded = false;
-
-      const bool k1 =
-          (HAL_GPIO_ReadPin(BUTTON_K1_GPIO_Port, BUTTON_K1_Pin) == GPIO_PIN_RESET);
-
-      /*
-       * Chi bat suon xuong, cach lan truoc it nhat 250 ms de chong doi phim.
-       *
-       * BO QUA khi console dang o che do hieu chuan tu ke: o do K1 duoc dung
-       * de CHOT ket qua hieu chuan. Khong co chot nay thi mot lan bam vua
-       * chot hieu chuan vua QUAY DONG CO - da xay ra that, va se la tai nan
-       * neu con canh quat.
-       *
-       * BO QUA CA khi dang o che do doc the qua USB. Che do do duoc chon bang
-       * cach GIU K1 luc khoi dong, nen nut van dang bi giu khi vao toi vong
-       * lap nay. Ma k1_prev khoi tao la false, nen vong dau tien se thay
-       * "suon xuong" gia va QUAY DONG CO - dung luc nguoi dung dang cam tay
-       * vao bo mach de giu nut.
-       */
-      /* Lay trang thai that lam moc - xem giai thich o khoi K2 ben duoi. */
-      if (!k1_seeded)
-      {
-        k1_seeded = true;
-        k1_prev = k1;
-      }
-
-      if (k1 && !k1_prev && (uint32_t)(now_ms - k1_ms) > 250u &&
-          dbg_console_get_mode() != DBG_MODE_MAGCAL &&
-          !usb_msc_active())
-      {
-        k1_ms = now_ms;
-
-        // if (dshot_motor_test_active() >= 0)
-        // {
-        //   dshot_motor_test_stop();
-        //   dbg_println("Dung quay thu.");
-        // }
-        // else if (dshot_motor_test_start(k1_next, 0.08f, 1500))
-        // {
-        //   dbg_print_int("Quay thu motor", (int32_t)k1_next + 1);
-        //   k1_next = (uint8_t)((k1_next + 1u) % FC_MOTOR_COUNT);
-        // }
-        // else
-        // {
-        //   dbg_println("Khong quay thu duoc - dang ARM.");
-        // }
-      }
-      k1_prev = k1;
-    }
-
-    /*
-     * Nut K2 (PC5, keo len nen bam la muc THAP): chay chuoi dao chieu cho cac
-     * motor trong dshot_reverse_mask. Voi moi motor: gui SPIN_DIRECTION_REVERSED
-     * roi SAVE_SETTINGS. THAO CANH QUAT truoc khi bam.
-     *
-     * Mask = 0 thi nut nay khong lam gi — do la trang thai binh thuong.
-     */
-    {
-      static bool k2_prev = false;
-      static uint32_t k2_ms = 0;
-      static bool k2_seeded = false;
-
-      const bool k2 =
-          (HAL_GPIO_ReadPin(BUTTON_K2_GPIO_Port, BUTTON_K2_Pin) == GPIO_PIN_RESET);
-
-      /*
-       * Vong dau tien phai lay trang thai THAT cua nut lam moc, khong duoc
-       * mac dinh la "chua nhan".
-       *
-       * Neu nut dang bi GIU tu luc khoi dong ma moc lai la false, thi
-       * k2 && !k2_prev thanh dung ngay vong dau - mot suon xuong GIA. Voi K2
-       * thi do la lenh dao chieu motor tu phat, dung luc tay nguoi dung con
-       * dat tren bo mach. Mac dinh dshot_reverse_mask = 0 nen chua no ra,
-       * nhung dat mask khac 0 la thanh tai nan.
-       *
-       * Da tung xay ra that voi K1 (giu K1 luc khoi dong de vao che do the
-       * nho thi no quay thu motor).
-       */
-      if (!k2_seeded)
-      {
-        k2_seeded = true;
-        k2_prev = k2;
-      }
-
-      if (k2 && !k2_prev && (uint32_t)(now_ms - k2_ms) > 250u)
-      {
-        k2_ms = now_ms;
-
-        // if (g_params.dshot_reverse_mask == 0u)
-        // {
-        //   dbg_println("K2: dshot_reverse_mask dang la 0, khong dao chieu gi.");
-        // }
-        // else if (dshot_reverse_motors(g_params.dshot_reverse_mask))
-        // {
-        //   dbg_print_int("K2: dao chieu motor theo mask 0x",
-        //                 (int32_t)g_params.dshot_reverse_mask);
-        //   dbg_println("  Nghe ESC bip xac nhan, roi 'set dshot_reverse_mask=0' + 'save'.");
-        // }
-        // else
-        // {
-        //   dbg_println("K2: khong chay duoc - dang ARM hoac chuoi truoc chua xong.");
-        // }
-      }
-      k2_prev = k2;
-    }
 
     ctrl_angle_update(micros()); /* chon che do -> setpoint toc do goc  */
     ctrl_rate_update();          /* PID toc do goc -> ctrl.pid_output        */
@@ -988,6 +873,7 @@ int main(void)
     tlm_stream_rx_update();    /* lenh tu may tinh -> doi ho so, nap PID     */
     tlm_stream_update(now_ms); /* quet bang luong, phat cai nao toi han      */
     param_msg_update(now_ms);  /* bom bang tham so va dau ra CLI con do      */
+    vib_stream_update();       /* luong rung 8 kHz, chi chay khi port = usb  */
     tlm_port_flush();          /* danh thuc DMA neu no dang ranh             */
 
     /*
@@ -1238,46 +1124,46 @@ static void MX_ADC3_Init(void)
   * @param None
   * @retval None
   */
-static void MX_I2C1_Init(void)
+static void MX_I2C2_Init(void)
 {
 
-  /* USER CODE BEGIN I2C1_Init 0 */
+  /* USER CODE BEGIN I2C2_Init 0 */
 
-  /* USER CODE END I2C1_Init 0 */
+  /* USER CODE END I2C2_Init 0 */
 
-  /* USER CODE BEGIN I2C1_Init 1 */
+  /* USER CODE BEGIN I2C2_Init 1 */
 
-  /* USER CODE END I2C1_Init 1 */
-  hi2c1.Instance = I2C1;
-  hi2c1.Init.Timing = 0x00B03FDB;
-  hi2c1.Init.OwnAddress1 = 0;
-  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
-  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
-  hi2c1.Init.OwnAddress2 = 0;
-  hi2c1.Init.OwnAddress2Masks = I2C_OA2_NOMASK;
-  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
-  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
-  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  /* USER CODE END I2C2_Init 1 */
+  hi2c2.Instance = I2C2;
+  hi2c2.Init.Timing = 0x00B03FDB;
+  hi2c2.Init.OwnAddress1 = 0;
+  hi2c2.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c2.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c2.Init.OwnAddress2 = 0;
+  hi2c2.Init.OwnAddress2Masks = I2C_OA2_NOMASK;
+  hi2c2.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c2.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c2) != HAL_OK)
   {
     Error_Handler();
   }
 
   /** Configure Analogue filter
   */
-  if (HAL_I2CEx_ConfigAnalogFilter(&hi2c1, I2C_ANALOGFILTER_ENABLE) != HAL_OK)
+  if (HAL_I2CEx_ConfigAnalogFilter(&hi2c2, I2C_ANALOGFILTER_ENABLE) != HAL_OK)
   {
     Error_Handler();
   }
 
   /** Configure Digital filter
   */
-  if (HAL_I2CEx_ConfigDigitalFilter(&hi2c1, 0) != HAL_OK)
+  if (HAL_I2CEx_ConfigDigitalFilter(&hi2c2, 0) != HAL_OK)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN I2C1_Init 2 */
+  /* USER CODE BEGIN I2C2_Init 2 */
 
-  /* USER CODE END I2C1_Init 2 */
+  /* USER CODE END I2C2_Init 2 */
 
 }
 

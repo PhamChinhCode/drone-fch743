@@ -132,7 +132,7 @@ void HAL_TIM_ErrorCallback(TIM_HandleTypeDef *htim)
 
 void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c)
 {
-    if (hi2c->Instance == I2C1) {
+    if (hi2c->Instance == I2C2) {
         if (hi2c->Devaddress == I2C1_BARO_HAL_ADDR) {
             bmp388_i2c_complete_isr();
         }
@@ -151,7 +151,7 @@ void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c)
 void HAL_I2C_MasterTxCpltCallback(I2C_HandleTypeDef *hi2c)
 {
 #if MAG_SOURCE == MAG_SOURCE_I2C
-    if (hi2c->Instance == I2C1 && hi2c->Devaddress != I2C1_BARO_HAL_ADDR) {
+    if (hi2c->Instance == I2C2 && hi2c->Devaddress != I2C1_BARO_HAL_ADDR) {
         mag_i2c_write_complete_isr();
     }
 #else
@@ -161,7 +161,7 @@ void HAL_I2C_MasterTxCpltCallback(I2C_HandleTypeDef *hi2c)
 
 void HAL_I2C_ErrorCallback(I2C_HandleTypeDef *hi2c)
 {
-    if (hi2c->Instance == I2C1) {
+    if (hi2c->Instance == I2C2) {
         if (hi2c->Devaddress == I2C1_BARO_HAL_ADDR) {
             bmp388_i2c_error_isr();
         }

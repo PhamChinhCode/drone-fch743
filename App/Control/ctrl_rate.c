@@ -169,8 +169,16 @@ bool ctrl_rate_update(void)
     uint32_t count, ts;
     imu_snapshot(&gyro, &count, &ts);
 
-    /* Chưa có mẫu mới, hoặc chưa tới lượt theo bộ chia nhịp. */
-    if (count == s_last_sample || (count % RATE_LOOP_DIVIDER) != 0u) {
+    /*
+     * Chưa đủ RATE_LOOP_DIVIDER mẫu mới kể từ lần chạy trước.
+     *
+     * KHÔNG dùng `count % RATE_LOOP_DIVIDER == 0`: vòng lặp chính mà dài hơn
+     * một chu kỳ mẫu (125 µs) thì giá trị count chẵn có thể trôi qua giữa hai
+     * lần đọc, và bước PID đó mất hẳn — đo được 3700 Hz thay vì 4000 Hz. So
+     * hiệu thì lần đọc sau vẫn chạy, chỉ trễ chút; dt lấy từ timestamp thật
+     * nên vẫn đúng. Phép trừ không dấu an toàn khi bộ đếm tràn.
+     */
+    if ((uint32_t)(count - s_last_sample) < RATE_LOOP_DIVIDER) {
         return false;
     }
 

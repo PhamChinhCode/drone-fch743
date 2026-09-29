@@ -43,6 +43,7 @@ typedef enum {
     TLM_MSG_ACK       = 0x0E,   /**< trả lời cho một lệnh uplink      */
     TLM_MSG_FC_INFO   = 0x0F,   /**< nhận dạng mạch bay, chữ ký bảng  */
     TLM_MSG_CLI_LINE  = 0x10,   /**< một dòng chữ trả lời lệnh CLI    */
+    TLM_MSG_VIB       = 0x11,   /**< gyro+accel CHƯA LỌC 8 kHz, xem vib_stream.h */
 
     /* --- Máy tính gửi lên (uplink) --- */
     TLM_MSG_CMD_SET_RATE  = 0x40,  /**< bật/tắt và đặt chu kỳ 1 luồng */
@@ -307,6 +308,35 @@ typedef struct __attribute__((packed)) {
     uint8_t  flags;         /**< TLM_CLI_FLAG_*                       */
     char     text[245];     /**< không cần ký tự kết thúc chuỗi       */
 } tlm_cli_line_t;
+
+/**
+ * 0x11 — một cụm mẫu IMU liên tiếp ở nhịp gốc 8 kHz, CHƯA QUA BỘ LỌC nào.
+ * Dùng để phân tích phổ rung. Chỉ phát qua USB CDC, xem vib_stream.h.
+ *
+ * Hệ trục THÂN (đã xoay theo imu_axis_map/sign), gyro đã trừ bias.
+ *
+ * Mất mẫu: idx0 của khung sau phải bằng idx0 + n của khung trước. Hở mà
+ * `ring_drops` không tăng thì mất ở phía máy tính/USB; `ring_drops` tăng thì
+ * firmware tự bỏ vì USB không rút kịp.
+ */
+#define TLM_VIB_SAMPLES_PER_FRAME  16u
+#define TLM_VIB_GYRO_LSB_PER_DPS   16.0f    /**< ±2048 °/s                */
+#define TLM_VIB_ACCEL_LSB_PER_G    2000.0f  /**< ±16,4 g                  */
+
+typedef struct __attribute__((packed)) {
+    int16_t gyro[3];            /**< °/s × TLM_VIB_GYRO_LSB_PER_DPS   */
+    int16_t accel[3];           /**< g × TLM_VIB_ACCEL_LSB_PER_G      */
+} tlm_vib_sample_t;
+
+typedef struct __attribute__((packed)) {
+    uint32_t idx0;              /**< số thứ tự mẫu đầu tiên trong khung */
+    uint32_t t0_us;             /**< micros() lúc đọc mẫu đầu tiên     */
+    uint32_t ring_drops;        /**< tổng số mẫu firmware đã bỏ        */
+    uint16_t motor[4];          /**< giá trị DShot lúc đóng khung      */
+    uint8_t  n;                 /**< số mẫu hợp lệ trong samples[]     */
+    uint8_t  flags;             /**< bit0 = đang ARM                   */
+    tlm_vib_sample_t samples[TLM_VIB_SAMPLES_PER_FRAME];
+} tlm_vib_t;
 
 /* ==========================================================================
  * Payload — uplink (máy tính điều khiển firmware)

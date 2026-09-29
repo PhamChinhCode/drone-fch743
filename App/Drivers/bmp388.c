@@ -9,7 +9,7 @@
 #include "fc_time.h"
 #include "main.h"
 
-extern I2C_HandleTypeDef hi2c1;
+extern I2C_HandleTypeDef hi2c2;
 
 /* HAL nhận địa chỉ 8 bit, tức địa chỉ 7 bit đã dịch trái một nhịp. */
 #define BMP_I2C_ADDR        ((uint16_t)(BARO_I2C_ADDR_7BIT << 1))
@@ -179,13 +179,13 @@ static struct {
 
 static bool reg_write(uint8_t reg, uint8_t value)
 {
-    return (HAL_I2C_Mem_Write(&hi2c1, BMP_I2C_ADDR, reg, I2C_MEMADD_SIZE_8BIT,
+    return (HAL_I2C_Mem_Write(&hi2c2, BMP_I2C_ADDR, reg, I2C_MEMADD_SIZE_8BIT,
                               &value, 1u, BARO_I2C_TIMEOUT_MS) == HAL_OK);
 }
 
 static bool reg_read(uint8_t reg, uint8_t *dst, uint16_t len)
 {
-    return (HAL_I2C_Mem_Read(&hi2c1, BMP_I2C_ADDR, reg, I2C_MEMADD_SIZE_8BIT,
+    return (HAL_I2C_Mem_Read(&hi2c2, BMP_I2C_ADDR, reg, I2C_MEMADD_SIZE_8BIT,
                              dst, len, BARO_I2C_TIMEOUT_MS) == HAL_OK);
 }
 
@@ -358,7 +358,7 @@ bool bmp388_init(void)
     /* Chip cần tối đa 2 ms kể từ lúc có nguồn mới trả lời được. */
     HAL_Delay(5);
 
-    if (HAL_I2C_IsDeviceReady(&hi2c1, BMP_I2C_ADDR, 3u,
+    if (HAL_I2C_IsDeviceReady(&hi2c2, BMP_I2C_ADDR, 3u,
                               BARO_I2C_TIMEOUT_MS) != HAL_OK) {
         goto fail;      /* sai địa chỉ, thiếu điện trở kéo lên, hoặc mất nguồn */
     }
@@ -557,7 +557,7 @@ static void start_read(void)
     s_xfer_start_us = micros();
     s_busy          = true;
 
-    if (HAL_I2C_Mem_Read_IT(&hi2c1, BMP_I2C_ADDR, BMP388_REG_STATUS,
+    if (HAL_I2C_Mem_Read_IT(&hi2c2, BMP_I2C_ADDR, BMP388_REG_STATUS,
                             I2C_MEMADD_SIZE_8BIT, s_buf,
                             BMP388_BURST_LEN) != HAL_OK) {
         s_busy = false;
@@ -609,7 +609,7 @@ bool bmp388_update(void)
      * mức thấp. Huỷ để giải phóng ngoại vi, lần hỏi vòng sau sẽ thử lại.
      */
     if (s_busy && fc_elapsed_us(now_us, s_xfer_start_us) > BMP_XFER_TIMEOUT_US) {
-        (void)HAL_I2C_Master_Abort_IT(&hi2c1, BMP_I2C_ADDR);
+        (void)HAL_I2C_Master_Abort_IT(&hi2c2, BMP_I2C_ADDR);
         s_busy = false;
         record_error();
     }

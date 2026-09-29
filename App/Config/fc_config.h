@@ -1104,17 +1104,24 @@
  * Bộ đó cho |B| dao động 9,3%. Ba lần đo liên tiếp bằng thuật toán ấy còn
  * lệch nhau tới 10% — dấu hiệu phép khớp suy biến, không phải vật lý.
  */
-#define MAG_OFFSET_X_G -0.0422f
-#define MAG_OFFSET_Y_G 1.6547f
-#define MAG_OFFSET_Z_G 0.2475f
+/*
+ * 2026-09-29: IST8310 tren GPS HONG, bo FC moi (I2C2) chuyen sang QMC5883P tren bo.
+ * Bo so IST8310 o tren KHONG dung duoc cho chip nay (offset 1,65 G) -> dat trung tinh,
+ * CHUA HIEU CHUAN. Phai do lai truc (MAG_AXIS_*) va hieu chuan truoc khi bay.
+ * Bo so IST8310 cu: OFFSET -0.0422 / 1.6547 / 0.2475  SCALE 1.1424 / 0.9740 / 1.1949
+ *                   SOFT xy 0.0096 / xz -0.0207 / yz -0.1322
+ */
+#define MAG_OFFSET_X_G 0.0f
+#define MAG_OFFSET_Y_G 0.0f
+#define MAG_OFFSET_Z_G 0.0f
 /* Đường chéo của S — tên "scale" giữ nguyên để không đổi nghĩa tham số cũ. */
-#define MAG_SCALE_X 1.1424f
-#define MAG_SCALE_Y 0.9740f
-#define MAG_SCALE_Z 1.1949f
+#define MAG_SCALE_X 1.0f
+#define MAG_SCALE_Y 1.0f
+#define MAG_SCALE_Z 1.0f
 /* Ba số ngoài đường chéo của S (đối xứng: S_yx = S_xy ...). 0 = thẳng trục như trước. */
-#define MAG_SOFT_XY 0.0096f
-#define MAG_SOFT_XZ -0.0207f
-#define MAG_SOFT_YZ -0.1322f
+#define MAG_SOFT_XY 0.0f
+#define MAG_SOFT_XZ 0.0f
+#define MAG_SOFT_YZ 0.0f
 
 /** Mất bao lâu không có mẫu mới thì coi từ kế là chết. Dùng chung mọi nguồn. */
 #define MAG_TIMEOUT_MS 200
@@ -1143,7 +1150,8 @@
  * MAG_SCALE_*, MAG_SOFT_* phía trên là bộ số của IST8310). Kiểm bằng hướng đi
  * GPS 4 hướng: lệch +7 / 0 / -2 / -2°. Đổi về 0 thì PHẢI đo lại bộ số QMC5883P.
  */
-#define MAG_I2C_USE_GPS_MAG 1
+/* 2026-09-29: IST8310 hong -> ve QMC5883P tren bo (xem ghi chu o MAG_OFFSET_*). */
+#define MAG_I2C_USE_GPS_MAG 0
 
 /** Timeout cho mỗi lượt Mem_Read/Write lúc init. Nhẹ hơn BARO vì ít byte hơn. */
 #define MAG_I2C_TIMEOUT_MS 20
@@ -1619,7 +1627,11 @@
 /* ==========================================================================
  * Telemetry
  * ========================================================================== */
-#define TLM_TX_BUFFER_SIZE 2048 /* ring buffer TX        */
+/*
+ * 8192 thay vì 2048: luồng rung 8 kHz (vib_stream) đẩy ~110 kB/s qua USB,
+ * 2048 byte chỉ đỡ được ~18 ms USB khựng. Đệm nằm ở AXI SRAM, còn dư nhiều.
+ */
+#define TLM_TX_BUFFER_SIZE 8192 /* ring buffer TX        */
 
 /*
  * Trần payload một khung.
