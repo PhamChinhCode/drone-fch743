@@ -913,12 +913,21 @@
  * sai chiều quay của gyro. Đừng sửa lẻ một dấu để "cho ra số đẹp".
  *
  * Muốn đo lại: đặt console về DBG_MODE_AXISCAL rồi làm lại ba tư thế.
+ *
+ * BO FC MỚI (từ 2026-09-29): SIGN X, Y đổi -1 -> +1.
+ *   Đo 2026-10-07 trên giá thử roll, lắc tay ±16°, so với IMU1 (ICM-42688,
+ *   trục đã kiểm chứng: d(roll)/dt = 1,02 × gyro X, r 0,999):
+ *       với SIGN -1,-1,-1:  gyro X IMU2 = -1,00 × IMU1 (r -1,000)
+ *                           accel X -0,99×, accel Y -0,99×, accel Z +0,98×
+ *   Tức trên bo mới module LSM6DSV quay 180° quanh trục đứng so với bo cũ.
+ *   SIGN +1,+1,-1 vẫn là phép quay hợp lệ (đảo 2 dấu, định thức +1) và trùng
+ *   đúng ma trận đang dùng cho IMU1. Bản tin tại tools/rig_imu_check.py.
  */
 #define IMU2_AXIS_MAP_X 1
 #define IMU2_AXIS_MAP_Y 0
 #define IMU2_AXIS_MAP_Z 2
-#define IMU2_AXIS_SIGN_X (-1)
-#define IMU2_AXIS_SIGN_Y (-1)
+#define IMU2_AXIS_SIGN_X (+1)
+#define IMU2_AXIS_SIGN_Y (+1)
 #define IMU2_AXIS_SIGN_Z (-1)
 
 /* --------------------------------------------------------------------------
