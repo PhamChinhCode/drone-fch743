@@ -586,7 +586,15 @@ bool mag_i2c_update(uint32_t now_us)
         }
     }
 
-    if (fc_elapsed_us(now_us, g_fc.mag.timestamp_us) > (MAG_TIMEOUT_MS * 1000u)) {
+    /*
+     * So sanh CO DAU: timestamp_us = s_rx_us do ISR ghi, nen neu ISR roi vao
+     * giua luc lay now_us (doi so) va luc doc s_new_raw o tren thi moc mau
+     * MUON hon now_us. Tru khong dau ra so khong lo -> ha healthy oan 20 ms
+     * (do 2026-10-07: ~1,5% nhip heartbeat mat bit SENSOR_MAG du count
+     * khong ngat lan nao).
+     */
+    if ((int32_t)fc_elapsed_us(now_us, g_fc.mag.timestamp_us) >
+        (int32_t)(MAG_TIMEOUT_MS * 1000u)) {
         g_fc.mag.healthy = false;
     }
 
