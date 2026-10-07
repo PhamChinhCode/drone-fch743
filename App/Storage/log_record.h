@@ -21,15 +21,16 @@
 typedef struct __attribute__((packed)) {
     uint32_t t_ms;        /**< mili giây kể từ lúc bắt đầu ghi        */
     int16_t  gyro[3];     /**< tốc độ góc đã lọc, đơn vị 0,1 °/s      */
-    int16_t  accel[3];    /**< gia tốc, đơn vị mg                     */
+    int16_t  accel_z;     /**< gia tốc trục Z thân, đơn vị mg. X, Y bỏ
+                               từ bản 3 để lấy chỗ cho chẩn đoán độ cao */
     int16_t  sp[3];       /**< mục tiêu tốc độ góc, đơn vị 0,1 °/s    */
     int16_t  pid[3];      /**< đầu ra PID -1..1, nhân 10000           */
     uint16_t motor[4];    /**< giá trị DShot thô 0..2047              */
     int16_t  att[3];      /**< roll/pitch/yaw, đơn vị 0,01 rad        */
     int16_t  alt_cm;      /**< độ cao ước lượng, cm                   */
     uint16_t thr;         /**< lệnh ga 0..1, nhân 10000               */
-    uint8_t  mode;        /**< flight_mode_t                          */
-    uint8_t  flags;       /**< bit0 armed, bit1 mixer bão hoà         */
+    uint8_t  flags;       /**< bit0 armed, bit1 mixer bão hoà,
+                               bit4..6 flight_mode_t (LOG_FLAG_MODE_*) */
 
     /* --- Chẩn đoán giữ vị trí ---
      *
@@ -45,6 +46,20 @@ typedef struct __attribute__((packed)) {
     uint16_t range_cm;    /**< khoảng cách tới mặt đất, cm            */
     uint8_t  flow_q;      /**< chất lượng optical flow, 0..255        */
     uint8_t  est_flags;   /**< các cờ LOG_EST_* dưới đây              */
+
+    /* --- Chẩn đoán giữ độ cao (bản 3) ---
+     *
+     * Máy bay tụt sau khi thả cần ga mà ga lại nằm đúng mức treo: chỉ nhìn
+     * độ cao với ga thì không phân biệt được tốc độ lên ước lượng sai hay
+     * mốc độ cao bị dời. Năm byte dưới đây trả lời thẳng câu đó. Một byte
+     * mỗi trường vì bản ghi đã chạm 64 byte; độ phân giải vẫn dư cho việc
+     * chẩn đoán.
+     */
+    uint8_t  rc_thr;      /**< cần ga 0..1, đơn vị 0,005              */
+    int8_t   climb;       /**< tốc độ lên EKF, đơn vị 0,05 m/s        */
+    int8_t   climb_tgt;   /**< tốc độ lên ALTHOLD đòi, đơn vị 0,05 m/s */
+    int8_t   alt_err;     /**< mốc - độ cao, đơn vị 0,02 m; 0 khi tắt */
+    int8_t   alt_i;       /**< tích phân ga ALTHOLD, đơn vị 0,005     */
 } bb_record_t;
 
 /*
@@ -66,6 +81,10 @@ typedef struct __attribute__((packed)) {
 #define LOG_EST_POS_LOCKED   0x20u  /**< poshold đã chốt mốc giữ chỗ     */
 #define LOG_EST_ALT_VIBE     0x40u  /**< EKF độ cao đang bỏ accel vì rung */
 #define LOG_EST_SAT_GUARD    0x80u  /**< ALTHOLD đang chặn ga vì bão hoà  */
+
+/** flight_mode_t nằm ở bit 4..6 của bb_record_t.flags. */
+#define LOG_FLAG_MODE_SHIFT  4u
+#define LOG_FLAG_MODE_MASK   0x70u
 
 _Static_assert(sizeof(bb_record_t) == LOG_RECORD_BYTES,
                "ban ghi log phai dung 48 byte");

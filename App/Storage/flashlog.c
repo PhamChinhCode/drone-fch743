@@ -313,7 +313,7 @@ void flashlog_update(uint32_t now_us)
             hdr.boot_ms   = HAL_GetTick();
             hdr.rate_hz   = FLASHLOG_RATE_HZ;
             hdr.rec_bytes = (uint8_t)LOG_RECORD_BYTES;
-            hdr.version   = 2u;   /* 2 = ban ghi 64 byte, them truong chan doan poshold */
+            hdr.version   = 3u;   /* 3 = bo ax/ay, mode vao flags, them 5 truong chan doan do cao */
 
             s_records = 0;
             s_dropped = 0;
@@ -376,7 +376,7 @@ bool flashlog_selftest(uint32_t records)
     hdr.boot_ms   = HAL_GetTick();
     hdr.rate_hz   = FLASHLOG_RATE_HZ;
     hdr.rec_bytes = (uint8_t)LOG_RECORD_BYTES;
-    hdr.version   = 2u;   /* 2 = ban ghi 64 byte, them truong chan doan poshold */
+    hdr.version   = 3u;   /* 3 = bo ax/ay, mode vao flags, them 5 truong chan doan do cao */
 
     s_records = 0;
     s_dropped = 0;

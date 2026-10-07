@@ -292,8 +292,10 @@ typedef struct __attribute__((packed)) {
  *
  * VÌ SAO text[] TO ĐẾN THẾ — và vì sao không to hơn được nữa:
  *
- *   `flash dump` in mỗi bản ghi log thành một dòng CSV 34 cột. Dòng dài nhất
- *   log_record_to_csv() sinh được là 241 ký tự (mọi trường kịch biên int16).
+ *   `flash dump` in mỗi bản ghi log thành một dòng CSV 37 cột. Dòng dài nhất
+ *   log_record_to_csv() sinh được là 255 ký tự (mọi trường kịch biên cùng
+ *   lúc — chỉ gặp ở bản ghi hỏng; dòng thật ~170). Bản ghi 3 đã vượt 245 về
+ *   lý thuyết: dòng như vậy bị cắt KÈM cờ TRUNC, app báo, không âm thầm.
  *   Với text[60] của bản giao thức 1 thì dòng bị cắt ÂM THẦM — dữ liệu ra sai
  *   mà không có dấu hiệu nào. Đó là lý do bản 2 tồn tại.
  *
