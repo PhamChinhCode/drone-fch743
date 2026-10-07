@@ -1,0 +1,30 @@
+# 2026-10-07 — bo tham so seq 15, sau chuyen bay ALTHOLD dau tien khung carbon
+# (Log/flightlog_20261007_104754.csv). Firmware c86e3d0, table_crc 0x9B8007AB.
+# Chi gom cac tham so KHAC mac dinh (+ angle_trim_roll_deg). Nap lai: go tung dong
+# qua CLI roi 'save'.
+# Thay doi so voi seq 9: pitch kd 1.2e-5 -> 1e-5 (giam rit), yaw kp/ki tang 3x/5x
+# (yaw lac cham), trim pitch +1.5 (troi toi ~1-2 do), hover 0.47 (do tu log),
+# hieu chuan la ban (offset z 0.9 G lon - nghi day pin/ESC).
+set rate_pid_roll_kp=0.0024
+set rate_pid_roll_ki=0.001
+set rate_pid_roll_kd=1.2e-5
+set rate_pid_pitch_kp=0.0024
+set rate_pid_pitch_ki=0.001
+set rate_pid_pitch_kd=1e-5
+set rate_pid_yaw_kp=0.0018
+set rate_pid_yaw_ki=0.001
+set rate_pid_yaw_kd=5e-7
+set angle_pid_kp=7
+set angle_trim_roll_deg=0.6
+set angle_trim_pitch_deg=1.5
+set althold_hover_thr=0.47
+set althold_max_climb_mps=2
+set mag_offset_x_g=-0.1367
+set mag_offset_y_g=0.1579
+set mag_offset_z_g=0.8984
+set mag_scale_x=0.9953
+set mag_scale_y=0.9711
+set mag_scale_z=1.0383
+set mag_soft_xy=-0.0316
+set mag_soft_xz=-0.0517
+set mag_soft_yz=0.0006

@@ -1,6 +1,6 @@
 # 2026-10-07 — bo PID chot sau chinh tren gia roll (luot 5), khung carbon, bo FC moi
 # roll: tre bam 30-40 ms, nhieu xuong motor thap. pitch = roll (chua thu tren gia).
-# Nap lai: go tung dong qua CLI roi 'save'. table_crc 0x9B8007AB, seq 8 (them angle_pid_kp=7).
+# Nap lai: go tung dong qua CLI roi 'save'. table_crc 0x9B8007AB, seq 8 (them angle_pid_kp=7); seq 9 them 2 dong althold cuoi file.
 set rate_pid_roll_kp=0.0024
 set rate_pid_roll_ki=0.001
 set rate_pid_roll_kd=1.2e-5
@@ -8,3 +8,5 @@ set rate_pid_pitch_kp=0.0024
 set rate_pid_pitch_ki=0.001
 set rate_pid_pitch_kd=1.2e-5
 set angle_pid_kp=7
+set althold_hover_thr=0.45
+set althold_max_climb_mps=2
