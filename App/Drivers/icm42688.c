@@ -131,16 +131,30 @@ static float s_accel_alpha;
  */
 static vec3f_t s_gyro_lpf;
 
-/* Notch biquad (RBJ), dạng trực tiếp II chuyển vị. Hệ số đã chia a0. */
-static struct {
+/*
+ * Notch biquad (RBJ), dạng trực tiếp II chuyển vị. Hệ số đã chia a0.
+ *
+ * Hệ số có HAI bộ: vòng lặp chính (icm42688_notch_track) ghi vào bộ đang
+ * rảnh rồi mới đổi chỉ số `cur` — một lần ghi 32 bit, nguyên tử — nên ngắt
+ * 8 kHz không bao giờ đọc phải bộ hệ số ghi dở (nửa cũ nửa mới). Trạng thái
+ * z1/z2 giữ nguyên khi đổi hệ số: tần số chỉ trượt vài Hz mỗi lần nên dạng
+ * chuyển vị II không sinh bước nhảy đáng kể.
+ */
+typedef struct {
     bool  on;
+    float f0;
     float b0, b1, b2, a1, a2;
+} notch_coef_t;
+
+static struct {
+    notch_coef_t    c[2];
+    volatile uint32_t cur;
     float z1[AXIS_COUNT], z2[AXIS_COUNT];
 } s_notch;
 
-static void notch_init(float f0_hz, float q, float fs_hz)
+static void notch_calc(notch_coef_t *c, float f0_hz, float q, float fs_hz)
 {
-    memset(&s_notch, 0, sizeof(s_notch));
+    memset(c, 0, sizeof(*c));
     if (f0_hz <= 0.0f || q <= 0.0f || f0_hz >= 0.5f * fs_hz) {
         return;                              /* tắt */
     }
@@ -149,22 +163,39 @@ static void notch_init(float f0_hz, float q, float fs_hz)
     const float alpha = sinf(w0) / (2.0f * q);
     const float a0    = 1.0f + alpha;
 
-    s_notch.b0 = 1.0f / a0;
-    s_notch.b1 = -2.0f * cw / a0;
-    s_notch.b2 = 1.0f / a0;
-    s_notch.a1 = -2.0f * cw / a0;
-    s_notch.a2 = (1.0f - alpha) / a0;
-    s_notch.on = true;
+    c->b0 = 1.0f / a0;
+    c->b1 = -2.0f * cw / a0;
+    c->b2 = 1.0f / a0;
+    c->a1 = -2.0f * cw / a0;
+    c->a2 = (1.0f - alpha) / a0;
+    c->f0 = f0_hz;
+    c->on = true;
+}
+
+static void notch_init(float f0_hz, float q, float fs_hz)
+{
+    memset(&s_notch, 0, sizeof(s_notch));
+    notch_calc(&s_notch.c[0], f0_hz, q, fs_hz);
+}
+
+/** Gọi từ vòng lặp chính: tính vào bộ rảnh rồi đổi bộ. */
+static void notch_retune(float f0_hz, float q, float fs_hz)
+{
+    const uint32_t next = s_notch.cur ^ 1u;
+    notch_calc(&s_notch.c[next], f0_hz, q, fs_hz);
+    __DMB();                                 /* hệ số xong hẳn rồi mới đổi */
+    s_notch.cur = next;
 }
 
 static inline float notch_apply(int axis, float x)
 {
-    if (!s_notch.on) {
+    const notch_coef_t *c = &s_notch.c[s_notch.cur];
+    if (!c->on) {
         return x;
     }
-    const float y = s_notch.b0 * x + s_notch.z1[axis];
-    s_notch.z1[axis] = s_notch.b1 * x - s_notch.a1 * y + s_notch.z2[axis];
-    s_notch.z2[axis] = s_notch.b2 * x - s_notch.a2 * y;
+    const float y = c->b0 * x + s_notch.z1[axis];
+    s_notch.z1[axis] = c->b1 * x - c->a1 * y + s_notch.z2[axis];
+    s_notch.z2[axis] = c->b2 * x - c->a2 * y;
     return y;
 }
 static uint8_t s_gyro_fs_sel;               /* bit dai do da ghi vao chip  */
@@ -717,4 +748,56 @@ vec3f_t icm42688_gyro_sigma_axes_dps(void)
 #else
     return (vec3f_t){ 0.0f, 0.0f, 0.0f };
 #endif
+}
+
+/* ==========================================================================
+ * Notch động bám theo ga — xem IMU_GYRO_DYN_NOTCH trong fc_config.h
+ * ========================================================================== */
+
+/** Tần số notch theo ga trung bình (DShot), nội suy/ngoại suy tuyến tính rồi kẹp. */
+static float dyn_notch_hz(float dshot)
+{
+    static const float X[] = IMU_GYRO_DYN_NOTCH_DSHOT;
+    static const float Y[] = IMU_GYRO_DYN_NOTCH_HZ;
+    const int n = (int)(sizeof(X) / sizeof(X[0]));
+
+    int i = 0;                          /* đoạn [i, i+1] dùng để tính */
+    while (i < n - 2 && dshot > X[i + 1]) {
+        i++;
+    }
+    const float f = Y[i] + (Y[i + 1] - Y[i]) * (dshot - X[i]) / (X[i + 1] - X[i]);
+    return fc_constrainf(f, IMU_GYRO_DYN_NOTCH_MIN_HZ, IMU_GYRO_DYN_NOTCH_MAX_HZ);
+}
+
+void icm42688_notch_track(uint32_t now_us)
+{
+#if IMU_GYRO_DYN_NOTCH
+    static uint32_t s_last_us;
+    if (fc_elapsed_us(now_us, s_last_us) < 1000000u / IMU_GYRO_DYN_NOTCH_RATE_HZ) {
+        return;
+    }
+    s_last_us = now_us;
+
+    float f0 = IMU_GYRO_NOTCH_HZ;
+    if (g_fc.motor.armed) {
+        float sum = 0.0f;
+        for (int i = 0; i < FC_MOTOR_COUNT; i++) {
+            sum += (float)g_fc.motor.throttle[i];
+        }
+        f0 = dyn_notch_hz(sum / (float)FC_MOTOR_COUNT);
+    }
+
+    /* Đổi dưới 1 Hz thì thôi: tiết kiệm sin/cos và không khuấy bộ lọc vô ích. */
+    if (fabsf(f0 - s_notch.c[s_notch.cur].f0) >= 1.0f) {
+        notch_retune(f0, IMU_GYRO_NOTCH_Q, (float)IMU_SAMPLE_RATE_HZ);
+    }
+#else
+    (void)now_us;
+#endif
+}
+
+float icm42688_notch_hz(void)
+{
+    const notch_coef_t *c = &s_notch.c[s_notch.cur];
+    return c->on ? c->f0 : 0.0f;
 }

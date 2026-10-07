@@ -791,6 +791,7 @@ int main(void)
     ctrl_rate_update();          /* PID toc do goc -> ctrl.pid_output        */
     mixer_update();              /* lenh dieu khien -> muc ga 4 motor        */
     dshot_update(micros());      /* phat khung DShot cho 4 ESC               */
+    icm42688_notch_track(micros()); /* notch gyro bam theo ga, 100 Hz        */
     bmp388_update();             /* xu ly mau baro va phat lenh doc I2C ke tiep */
 #if MAG_SOURCE == MAG_SOURCE_I2C
     mag_i2c_update(micros()); /* dung chung I2C1 voi BMP388, tu gioi han theo MAG_I2C_UPDATE_RATE_HZ */

@@ -130,6 +130,15 @@ vec3f_t icm42688_gyro_sigma_axes_dps(void);
 /** Gọi khi chân INT1 (PC4) có sườn lên. */
 void icm42688_drdy_isr(void);
 
+/**
+ * Notch động: gọi mỗi vòng lặp chính, tự giới hạn ở IMU_GYRO_DYN_NOTCH_RATE_HZ.
+ * Đang ARM thì đặt notch theo ga trung bình 4 motor, không thì về notch tĩnh.
+ */
+void  icm42688_notch_track(uint32_t now_us);
+
+/** Tần số notch đang dùng (Hz), 0 nếu tắt. */
+float icm42688_notch_hz(void);
+
 /** Gọi khi DMA của SPI1 truyền nhận xong. */
 void icm42688_spi_complete_isr(void);
 

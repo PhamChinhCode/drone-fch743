@@ -8,6 +8,7 @@
 #include "param_msg.h"
 #include "param_table.h"
 #include "param_apply.h"
+#include "icm42688.h"
 
 /** Số gói tối đa phát trong một lần gọi update, tránh dồn cục gây tràn đệm. */
 #define TLM_MAX_PACKETS_PER_UPDATE  4
@@ -181,7 +182,7 @@ static void pack_pid(const fc_t *fc, void *dst)
         m->measured_ddps[i]   = dps_to_ddps(meas[i]);
         m->output_permille[i] = sat_i16(out[i] * 1000.0f);
     }
-    m->reserved = 0;
+    m->reserved = (uint16_t)(icm42688_notch_hz() + 0.5f);   /* notch gyro dang dung, Hz */
 }
 
 static void pack_system(const fc_t *fc, void *dst)

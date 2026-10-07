@@ -791,6 +791,29 @@
 #define IMU_GYRO_NOTCH_Q 2.5f
 
 /*
+ * Notch ĐỘNG bám theo ga (khung carbon, từ 2026-10-07).
+ *
+ * Đo trên giá roll, có cánh 8x4.5, gyro THÔ 8 kHz lúc giữ yên (lần 7):
+ *   DShot TB ~480  -> đỉnh chính 113 Hz
+ *   DShot TB ~1068 -> đỉnh chính 216 Hz  (gần mức treo)
+ *   DShot TB ~1547 -> đỉnh chính 279 Hz, 4,9 °/s — mạnh nhất
+ * Đỉnh luôn ~2 x tần số quay = tần số lá cánh quét qua (cánh 2 lá), nên
+ * notch tĩnh chỉ đúng ở MỘT mức ga. ESC BLHeli_S không báo vòng quay, nên
+ * thay vì RPM filter ta suy tần số từ ga trung bình 4 motor theo bảng trên
+ * (nội suy tuyến tính, ngoài bảng thì ngoại suy theo đoạn gần nhất rồi kẹp).
+ *
+ * Chỉ bám khi ĐANG ARM; disarm thì về IMU_GYRO_NOTCH_HZ. Q giữ 2,5 (rộng
+ * ~1/2,5 tần số) để chịu được sai lệch do pin sụt áp.
+ * 0 = tắt, dùng notch tĩnh như cũ.
+ */
+#define IMU_GYRO_DYN_NOTCH 1
+#define IMU_GYRO_DYN_NOTCH_DSHOT { 480.0f, 1068.0f, 1547.0f }
+#define IMU_GYRO_DYN_NOTCH_HZ    { 113.0f,  216.0f,  279.0f }
+#define IMU_GYRO_DYN_NOTCH_MIN_HZ 90.0f
+#define IMU_GYRO_DYN_NOTCH_MAX_HZ 350.0f
+#define IMU_GYRO_DYN_NOTCH_RATE_HZ 100  /* nhịp tính lại hệ số            */
+
+/*
  * Xoay trục cảm biến sang trục thân máy bay.
  * Quy ước thân: X = mũi trước, Y = cánh phải, Z = hướng xuống (NED body).
  *

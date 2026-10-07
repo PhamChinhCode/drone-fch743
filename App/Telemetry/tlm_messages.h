@@ -144,7 +144,7 @@ typedef struct __attribute__((packed)) {
     int16_t setpoint_ddps[3];   /**< mục tiêu tốc độ góc, 1/10 dps    */
     int16_t measured_ddps[3];   /**< giá trị đo được                  */
     int16_t output_permille[3]; /**< đầu ra PID, 1/1000 (-1000..1000) */
-    uint16_t reserved;
+    uint16_t reserved;          /**< tần số notch gyro đang dùng, Hz (0 = tắt) */
 } tlm_pid_t;
 
 /** 0x0A — hiệu năng hệ thống. (16 byte) */
