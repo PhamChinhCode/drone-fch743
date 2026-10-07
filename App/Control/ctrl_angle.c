@@ -29,6 +29,8 @@ static bool          s_started;
 static flight_mode_t s_mode = FLIGHT_MODE_ANGLE;
 static bool          s_fallback;
 static bool          s_alt_active;   /* dang giu do cao hay khong */
+static bool          s_prev_armed;   /* armed o nhip truoc: phan biet vua ARM voi doi che do */
+static bool          s_alt_wait;     /* giu do cao: dang nam dat, cho can ga day len */
 
 void ctrl_angle_init(void)
 {
@@ -37,6 +39,8 @@ void ctrl_angle_init(void)
     s_mode     = FLIGHT_MODE_ANGLE;
     s_fallback   = false;
     s_alt_active = false;
+    s_prev_armed = false;
+    s_alt_wait   = false;
     ctrl_poshold_init();
     ctrl_althold_init();
     ctrl_offboard_init();
@@ -189,6 +193,7 @@ bool ctrl_angle_update(uint32_t now_us)
             if (s_alt_active) {
                 ctrl_althold_reset();
                 s_alt_active = false;
+                s_alt_wait   = false;
             }
             g_fc.ctrl.throttle_cmd = g_fc.rc.throttle;
         } else {
@@ -198,14 +203,49 @@ bool ctrl_angle_update(uint32_t now_us)
              * nhịp trước, tức đúng mức ga tay.
              */
             if (!s_alt_active) {
-                ctrl_althold_enter(g_fc.ctrl.throttle_cmd);
+                /*
+                 * NGOẠI LỆ: vừa ARM ngay trong chế độ giữ độ cao. Máy bay
+                 * đang nằm đất, ga tay lúc đó (thường ~0) không phải ga
+                 * treo — nạp theo nó đẩy tích phân về -i_limit, và cả chục
+                 * giây sau máy bay vẫn tụt nửa mét mỗi lần thả cần (log
+                 * 10-07 16:20). Vào bằng ga treo: tích phân bắt đầu từ 0.
+                 * Cùng lý do cho trường hợp đã ARM ở ANGLE, ga còn dưới
+                 * althold_thr_min rồi mới gạt sang: đó vẫn là nằm đất.
+                 */
+                const bool on_ground = !s_prev_armed ||
+                    g_fc.ctrl.throttle_cmd <= g_params.althold_thr_min;
+                if (on_ground) {
+                    s_alt_wait = true;
+                } else {
+                    ctrl_althold_enter(g_fc.ctrl.throttle_cmd);
+                }
                 s_alt_active = true;
+            }
+
+            /*
+             * Chờ cất cánh: vào bằng ga treo mà cần đang ở giữa thì motor
+             * nhảy ngay lên ~ga treo khi còn nằm đất — máy bay tự nhấc lên
+             * dù người lái chưa ra lệnh. Giữ ga sàn cho tới khi cần ga vượt
+             * lên khỏi vùng chết (hoặc Pi đòi bay lên), rồi mới vào vòng giữ
+             * độ cao với mốc và tích phân mới.
+             */
+            if (s_alt_wait) {
+                const bool stick_up = !ctrl_althold_stick_centred() &&
+                                      g_fc.rc.throttle > g_params.althold_stick_centre;
+                const bool pi_up    = ctrl_offboard_is_active() &&
+                                      ctrl_offboard_climb_mps() > 0.0f;
+                if (stick_up || pi_up) {
+                    ctrl_althold_enter(g_params.althold_hover_thr);
+                    s_alt_wait = false;
+                }
             }
 
             const float dt = (float)ANGLE_PERIOD_US * 1.0e-6f;
             float       thr;
 
-            if (ctrl_althold_update(dt, &thr)) {
+            if (s_alt_wait) {
+                g_fc.ctrl.throttle_cmd = g_params.althold_thr_min;
+            } else if (ctrl_althold_update(dt, &thr)) {
                 g_fc.ctrl.throttle_cmd = thr;
             } else {
                 /*
@@ -216,6 +256,7 @@ bool ctrl_angle_update(uint32_t now_us)
                 s_fallback             = true;
             }
         }
+        s_prev_armed = armed;
     }
 
     /*

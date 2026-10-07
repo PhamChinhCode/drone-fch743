@@ -658,6 +658,20 @@
 #define ALTHOLD_CLIMB_ACCEL_MPS2 3.0f
 
 /*
+ * Thả cần ga về giữa: HÃM trước, chốt mốc sau — cùng cách POSHOLD làm với vị
+ * trí ngang. Trong lúc hãm mốc bám theo độ cao hiện tại, chỉ chốt khi tốc độ
+ * lên đã dưới ALTHOLD_LOCK_CLIMB_MPS. Chốt ngay lúc thả thì máy bay trôi theo
+ * quán tính qua mốc rồi bị khâu P kéo ngược lại (log 10-07 16:35: vọt 0,35 m
+ * khi thả ở 1 m/s).
+ *
+ * Ngưỡng 0,1 m/s: trên mức nhiễu của climb_rate EKF (~0,05) và ứng với chưa
+ * tới 2 cm quãng hãm còn lại. Quá ALTHOLD_BRAKE_TIMEOUT_S mà vẫn chưa dưới
+ * ngưỡng (gió đứng, ước lượng lệch) thì chốt luôn tại chỗ.
+ */
+#define ALTHOLD_LOCK_CLIMB_MPS   0.1f
+#define ALTHOLD_BRAKE_TIMEOUT_S  3.0f
+
+/*
  * Chặn ga khi mixer bão hoà kéo dài.
  *
  * Bão hoà nhiều nghĩa là máy bay đang dao động hoặc mất điều khiển tư thế; đẩy thêm ga

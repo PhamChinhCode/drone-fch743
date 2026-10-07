@@ -38,6 +38,9 @@ static bool  s_primed;          /* đã có mẫu trước để lấy đạo h�
 static float s_reset_seen;      /* altitude_reset_sum_m đã áp vào mốc */
 static float s_sat_frac;        /* tỉ lệ bão hoà đã lọc, 0..1     */
 static bool  s_sat_guard;       /* đã chốt chặn ga vì bão hoà     */
+static int8_t s_out_clamp;      /* nhịp trước ga bị kẹp: -1 sàn, +1 trần, 0 không */
+static bool  s_braking;         /* vừa thả cần: đang hãm, mốc chưa chốt */
+static float s_brake_s;         /* đã hãm bao lâu, giây           */
 
 /**
  * Phần lực đẩy theo phương THẲNG ĐỨNG trên mỗi đơn vị ga: cos(roll)·cos(pitch),
@@ -63,6 +66,9 @@ void ctrl_althold_reset(void)
     s_primed       = false;
     s_sat_frac     = 0.0f;
     s_sat_guard    = false;
+    s_out_clamp    = 0;
+    s_braking      = false;
+    s_brake_s      = 0.0f;
 }
 
 void ctrl_althold_init(void)
@@ -141,9 +147,23 @@ bool ctrl_althold_update(float dt, float *throttle_out)
         s_target_m = alt;
     } else if (fabsf(dev) <= db) {
         /*
+         * Vừa thả cần: hãm về tốc độ 0 và cho mốc bám theo, chỉ chốt khi máy
+         * bay đã gần như đứng lại — xem ALTHOLD_LOCK_CLIMB_MPS.
+         */
+        if (s_braking) {
+            s_brake_s += dt;
+            s_target_m = alt;
+            if (fabsf(climb) < ALTHOLD_LOCK_CLIMB_MPS ||
+                s_brake_s > ALTHOLD_BRAKE_TIMEOUT_S) {
+                s_braking = false;
+            }
+        }
+
+        /*
          * Cần ở giữa: GIỮ. Sai số độ cao đổi ra tốc độ lên mong muốn bằng
          * khâu P, rồi kẹp lại — không có kẹp thì lệch 10 m sẽ đòi một tốc độ
          * lên mà máy bay không thể đạt, và tích phân dồn trong lúc đó.
+         * Lúc đang hãm thì mốc = độ cao hiện tại nên want = 0.
          */
         want = fc_constrainf(
             g_params.althold_alt_kp * (s_target_m - alt),
@@ -174,10 +194,12 @@ bool ctrl_althold_update(float dt, float *throttle_out)
         want = sign * mag * g_params.althold_max_climb_mps;
 
         /*
-         * Mốc BÁM THEO độ cao hiện tại trong lúc đang đẩy cần. Thả cần ra là
-         * chốt ngay tại chỗ vừa tới — xem ghi chú ở header.
+         * Mốc BÁM THEO độ cao hiện tại trong lúc đang đẩy cần. Thả cần ra thì
+         * hãm trước, chốt ở chỗ máy bay dừng — xem ALTHOLD_LOCK_CLIMB_MPS.
          */
         s_target_m = alt;
+        s_braking  = true;
+        s_brake_s  = 0.0f;
     }
 
     /*
@@ -213,7 +235,16 @@ bool ctrl_althold_update(float dt, float *throttle_out)
      * ctrl_rate.c. Khâu trộn hy sinh ga để giữ quyền điều khiển tư thế, nên
      * lúc đó ga yêu cầu không tới được motor và dồn tích phân là vô nghĩa.
      */
-    if (!mixer_saturated()) {
+    /*
+     * Ga đầu ra bị kẹp ở sàn/trần thì cũng không dồn tiếp theo chiều đó —
+     * nằm đất với cần ga thấp, sai số âm mãi mà máy bay không thể xuống
+     * thêm, tích phân sẽ cuốn về -i_limit. Dùng trạng thái kẹp của nhịp
+     * trước: trễ một nhịp, không đáng kể.
+     */
+    const bool clamp_blocks = (s_out_clamp < 0 && error < 0.0f) ||
+                              (s_out_clamp > 0 && error > 0.0f);
+
+    if (!mixer_saturated() && !clamp_blocks) {
         s_integral += g_params.althold_climb_ki * error * dt;
         s_integral  = fc_constrainf(s_integral,
                                     -g_params.althold_i_limit,
@@ -258,6 +289,8 @@ bool ctrl_althold_update(float dt, float *throttle_out)
     if (s_sat_guard) {
         thr_max = fminf(thr_max, (g_params.althold_hover_thr + s_integral) / tilt_cos());
     }
+
+    s_out_clamp = (thr <= g_params.althold_thr_min) ? -1 : (thr >= thr_max) ? 1 : 0;
 
     *throttle_out = fc_constrainf(thr, g_params.althold_thr_min, thr_max);
     return true;

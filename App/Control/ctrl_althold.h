@@ -28,8 +28,8 @@
  *
  *   Ở GIỮA (trong vùng chết) -> giữ nguyên độ cao đang có.
  *   Ra khỏi vùng chết       -> lên/xuống với tốc độ tỉ lệ, và mốc độ cao
- *                              BÁM THEO độ cao hiện tại. Thả cần ra là nó
- *                              chốt ngay tại chỗ vừa tới.
+ *                              BÁM THEO độ cao hiện tại. Thả cần ra thì
+ *                              hãm về 0 rồi chốt ở chỗ máy bay dừng lại.
  *
  *   Nếu mốc không bám theo lúc đang đẩy cần, thì mỗi lần lên cao 5 m rồi thả
  *   tay, máy bay sẽ lao ngược xuống chỗ cũ.
