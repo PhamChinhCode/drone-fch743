@@ -671,6 +671,41 @@
 #define ALTHOLD_LOCK_CLIMB_MPS   0.1f
 #define ALTHOLD_BRAKE_TIMEOUT_S  3.0f
 
+/* ==========================================================================
+ * GIỮ HƯỚNG (yaw) bằng la bàn — ANGLE / ALTHOLD / POSHOLD
+ *
+ * Trước đây yaw chỉ điều khiển theo TỐC ĐỘ: thả cần thì giữ tốc độ quay 0,
+ * mỗi cú đẩy nhỏ (gió, mô-men lệch cặp chéo ~100 DShot) để lại một độ lệch
+ * vĩnh viễn — log 10-07 17:27: hướng trôi -24° -> -43° trong 40 s không đụng
+ * cần. Nay có la bàn đã hiệu chuẩn nên yaw ước lượng không trôi, đủ tin để
+ * bám.
+ *
+ * Cách làm giống ALTHOLD: đánh cần -> điều khiển tốc độ như cũ; thả cần ->
+ * hãm về 0, khi |gyro z| dưới HEADING_LOCK_RATE_DPS (hoặc quá
+ * HEADING_BRAKE_TIMEOUT_S) thì chốt hướng hiện tại làm mốc; sau đó lệnh tốc
+ * độ yaw = HEADING_HOLD_KP × sai số hướng, kẹp ±HEADING_HOLD_MAX_RATE_DPS.
+ *
+ * Chỉ giữ khi hướng đáng tin: est_mag_yaw_enable bật, la bàn đã căn hướng
+ * lần đầu, và có mẫu la bàn được nhận trong HEADING_MAG_STALE_MS gần nhất.
+ * Mất điều kiện là thả mốc, về điều khiển tốc độ — không bám một con số
+ * có thể đang trôi. Yaw ước lượng nhảy bậc (yawzero, căn lại) cũng thả mốc.
+ *
+ * Không chạy dưới đất (ga dưới HEADING_MIN_THROTTLE, hoặc ALTHOLD đang chờ
+ * cất cánh) — đứng yên trên bàn chân thì không quay được, sai số hướng chỉ
+ * dồn vào tích phân yaw.
+ *
+ * Để là #define, không phải param: thêm param đổi table_crc và bộ chỉnh đang
+ * lưu bị coi là của firmware khác. Tắt hẳn: HEADING_HOLD_ENABLE 0.
+ * ========================================================================== */
+#define HEADING_HOLD_ENABLE          1
+#define HEADING_HOLD_KP              2.5f   /* °/s cho mỗi ° sai hướng */
+#define HEADING_HOLD_MAX_RATE_DPS    60.0f
+#define HEADING_LOCK_RATE_DPS        10.0f
+#define HEADING_BRAKE_TIMEOUT_S      2.0f
+#define HEADING_MAG_STALE_MS         3000u
+#define HEADING_MIN_THROTTLE         0.15f
+#define HEADING_JUMP_DEG             10.0f  /* yaw nhảy quá ngần này trong 1 nhịp -> thả mốc */
+
 /*
  * Chặn ga khi mixer bão hoà kéo dài.
  *

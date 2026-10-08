@@ -10,6 +10,9 @@
 #include "fc_state.h"
 #include "param_table.h"
 #include "fc_time.h"
+#include "ekf_attitude.h"
+
+#include <math.h>
 
 #define ANGLE_PERIOD_US (1000000UL / FC_ATTITUDE_RATE_HZ)
 
@@ -32,6 +35,68 @@ static bool          s_alt_active;   /* dang giu do cao hay khong */
 static bool          s_prev_armed;   /* armed o nhip truoc: phan biet vua ARM voi doi che do */
 static bool          s_alt_wait;     /* giu do cao: dang nam dat, cho can ga day len */
 
+/* --- Giu huong bang la ban, xem HEADING_HOLD_* trong fc_config.h --- */
+static bool          s_hh_locked;    /* da chot moc huong                  */
+static float         s_hh_target;    /* moc huong, rad                     */
+static float         s_hh_brake_s;   /* da ham bao lau sau khi tha can yaw */
+static float         s_hh_prev_yaw;  /* yaw nhip truoc, de bat nhay bac    */
+static uint32_t      s_hh_mag_n;     /* so lan la ban duoc nhan lan cuoi thay */
+static uint32_t      s_hh_mag_ms;    /* ... va luc do                      */
+
+static float wrap_pi(float a)
+{
+    while (a >  FC_PI) { a -= 2.0f * FC_PI; }
+    while (a < -FC_PI) { a += 2.0f * FC_PI; }
+    return a;
+}
+
+/**
+ * Lệnh tốc độ yaw khi người lái KHÔNG đánh cần yaw.
+ *
+ * @param can_hold  được phép giữ hướng ở nhịp này (đúng chế độ, đang bay)
+ * @param dt        chu kỳ vòng, giây
+ * @return          tốc độ yaw mong muốn, °/s
+ */
+static float heading_hold_rate(bool can_hold, float dt)
+{
+    const float yaw = g_fc.est.attitude_rad.yaw;
+    const bool  jump = fabsf(wrap_pi(yaw - s_hh_prev_yaw)) >
+                       HEADING_JUMP_DEG * FC_DEG_TO_RAD;
+    s_hh_prev_yaw = yaw;
+
+    /* La bàn còn sống: số lần nhận mẫu phải tăng trong cửa sổ gần đây. */
+    const uint32_t now_ms = millis();
+    const uint32_t n      = ekf_attitude_mag_updates();
+    if (n != s_hh_mag_n) {
+        s_hh_mag_n  = n;
+        s_hh_mag_ms = now_ms;
+    }
+    const bool heading_ok = ekf_attitude_mag_enabled() &&
+                            ekf_attitude_mag_aligned() &&
+                            (uint32_t)(now_ms - s_hh_mag_ms) < HEADING_MAG_STALE_MS;
+
+    if (!HEADING_HOLD_ENABLE || !can_hold || !heading_ok || jump) {
+        s_hh_locked  = false;
+        s_hh_brake_s = 0.0f;
+        return 0.0f;
+    }
+
+    if (!s_hh_locked) {
+        /* Hãm về 0 trước, chốt ở chỗ máy bay thôi quay. */
+        s_hh_brake_s += dt;
+        if (fabsf(g_fc.imu.gyro_filtered_dps.z) < HEADING_LOCK_RATE_DPS ||
+            s_hh_brake_s > HEADING_BRAKE_TIMEOUT_S) {
+            s_hh_target = yaw;
+            s_hh_locked = true;
+        }
+        return 0.0f;
+    }
+
+    const float err_deg = wrap_pi(s_hh_target - yaw) * FC_RAD_TO_DEG;
+    return fc_constrainf(HEADING_HOLD_KP * err_deg,
+                         -HEADING_HOLD_MAX_RATE_DPS, HEADING_HOLD_MAX_RATE_DPS);
+}
+
 void ctrl_angle_init(void)
 {
     s_last_us  = micros();
@@ -41,6 +106,7 @@ void ctrl_angle_init(void)
     s_alt_active = false;
     s_prev_armed = false;
     s_alt_wait   = false;
+    s_hh_locked  = false;
     ctrl_poshold_init();
     ctrl_althold_init();
     ctrl_offboard_init();
@@ -260,13 +326,24 @@ bool ctrl_angle_update(uint32_t now_us)
     }
 
     /*
-     * --- Trục YAW: luôn điều khiển theo tốc độ ---
-     * Không có la bàn thì yaw ước lượng trôi dần, giữ hướng theo nó là tự làm
-     * máy bay quay đi. Xem chú thích về yaw trong ekf_attitude.h.
+     * --- Trục YAW ---
+     * Đánh cần (hoặc OFFBOARD, ACRO): điều khiển theo tốc độ như trước.
+     * Thả cần ở ANGLE/ALTHOLD/POSHOLD khi đang bay và la bàn còn tin được:
+     * giữ hướng — xem HEADING_HOLD_* trong fc_config.h. Không có la bàn thì
+     * vẫn chỉ giữ tốc độ 0, vì yaw ước lượng khi đó trôi (ekf_attitude.h).
      */
-    const float yaw_rate = ctrl_offboard_is_active()
-                         ? ctrl_offboard_yaw_rate_dps()
-                         : (g_fc.rc.yaw * g_params.rate_max_yaw_dps);
+    const bool offb     = ctrl_offboard_is_active();
+    const bool flying   = g_fc.motor.armed && (g_fc.mode == FC_MODE_ARMED) &&
+                          !s_alt_wait &&
+                          g_fc.ctrl.throttle_cmd > HEADING_MIN_THROTTLE;
+    const bool can_hold = !offb && (s_mode != FLIGHT_MODE_ACRO) &&
+                          (g_fc.rc.yaw == 0.0f) && flying;
+    const float hold_rate = heading_hold_rate(can_hold,
+                                              (float)ANGLE_PERIOD_US * 1.0e-6f);
+
+    const float yaw_rate = offb      ? ctrl_offboard_yaw_rate_dps()
+                         : can_hold  ? hold_rate
+                                     : (g_fc.rc.yaw * g_params.rate_max_yaw_dps);
 
     if (s_mode == FLIGHT_MODE_ACRO) {
         /* Cần ra thẳng tốc độ quay. */
@@ -333,7 +410,7 @@ bool ctrl_angle_update(uint32_t now_us)
 
     g_fc.ctrl.setpoint_angle_rad.roll  = target_roll;
     g_fc.ctrl.setpoint_angle_rad.pitch = target_pitch;
-    g_fc.ctrl.setpoint_angle_rad.yaw   = 0.0f;
+    g_fc.ctrl.setpoint_angle_rad.yaw   = s_hh_locked ? s_hh_target : 0.0f;
 
     /* Sai lệch góc, đổi sang độ vì angle_pid_kp tính theo độ. */
     const float err_roll_deg  =
