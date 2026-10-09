@@ -58,9 +58,11 @@ void ekf_altitude_update_baro(float altitude_m);
  *
  * @param range_m    khoảng cách đo được dọc trục thân, mét
  * @param tilt_cos   cosin góc nghiêng, lấy từ ekf_attitude_tilt_cos()
+ * @param lever_m    độ cao tâm trừ độ cao cảm biến do lắp lệch tâm, phần thay
+ *                   đổi theo góc nghiêng (bằng 0 khi nằm phẳng), mét
  * @return true nếu số đo được dùng
  */
-bool ekf_altitude_update_range(float range_m, float tilt_cos);
+bool ekf_altitude_update_range(float range_m, float tilt_cos, float lever_m);
 
 float ekf_altitude_m(void);
 float ekf_altitude_climb_rate_mps(void);

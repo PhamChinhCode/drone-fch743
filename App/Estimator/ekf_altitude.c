@@ -206,7 +206,7 @@ void ekf_altitude_update_baro(float altitude_m)
     update_height(altitude_m, g_params.est_baro_noise_m * g_params.est_baro_noise_m);
 }
 
-bool ekf_altitude_update_range(float range_m, float tilt_cos)
+bool ekf_altitude_update_range(float range_m, float tilt_cos, float lever_m)
 {
     /*
      * Nghiêng nhiều thì tia laser bắn xiên, chạm vào chỗ xa hơn hẳn điểm
@@ -225,8 +225,9 @@ bool ekf_altitude_update_range(float range_m, float tilt_cos)
         return false;
     }
 
-    /* Chiếu khoảng cách nghiêng xuống phương thẳng đứng. */
-    const float height = range_m * tilt_cos;
+    /* Chiếu khoảng cách nghiêng xuống phương thẳng đứng, rồi dời từ điểm đặt
+     * cảm biến về tâm máy bay. */
+    const float height = range_m * tilt_cos + lever_m;
     const float r      = g_params.est_range_noise_m * g_params.est_range_noise_m;
     const uint32_t now_us = micros();
 
@@ -346,7 +347,14 @@ bool ekf_altitude_update_range(float range_m, float tilt_cos)
     /* Bậc địa hình khi laser vẫn chạy: chỉ dời h, v và P vẫn đúng nên giữ nguyên. */
 
     s_step_n             = 0;
-    s_div_active         = false;
+    /*
+     * KHÔNG xoá chuỗi phân kỳ (s_div_active) ở đây. Bậc địa hình thật thì mẫu kế
+     * tiếp đã khớp và nhánh cập nhật thường tự xoá chuỗi. Còn khi v sai thì neo h
+     * xong mẫu kế lại bị loại: xoá chuỗi ở đây làm nhánh phân kỳ (EST_RANGE_DIVERGE_MS
+     * = 300 ms, nhánh DUY NHẤT sửa được v) không bao giờ tới hạn vì bậc neo lại mỗi
+     * EST_RANGE_STEP_N mẫu (~100 ms) - v sai bị khoá vĩnh viễn, còn trôi theo bias
+     * accel: 10-09 trên giá, climb +680 m/s, alt răng cưa 10 -> 66 m mỗi 100 ms.
+     */
     s_valid              = true;
     s_range_used_once    = true;
     s_range_last_used_us = now_us;

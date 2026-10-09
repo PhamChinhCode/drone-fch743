@@ -206,7 +206,18 @@ bool estimator_update(uint32_t now_us)
         s_flow_seen = g_fc.flow.sample_count;
 
         const float range_m = (float)g_fc.flow.range_mm * 0.001f;
-        if (ekf_altitude_update_range(range_m, ekf_attitude_tilt_cos()))
+
+        /*
+         * Cảm biến lệch tâm r = (FLOW_OFFSET_X_M, 0, FLOW_OFFSET_Z_M): khi nghiêng
+         * nó cao/thấp hơn tâm (R·r).z, nên H_tâm = d·cos + (R·r).z. Trừ r.z để
+         * mốc lúc nằm phẳng giữ nguyên như cũ (ngưỡng tiếp đất chỉnh theo mốc đó).
+         * Lắp sau tâm 10 cm: cúi 20° báo cao thêm 3,4 cm -> bay tới bị tụt.
+         */
+        const vec3f_t r_ned = ekf_attitude_body_to_ned(
+            (vec3f_t){ FLOW_OFFSET_X_M, 0.0f, FLOW_OFFSET_Z_M });
+        const float lever_m = r_ned.z - FLOW_OFFSET_Z_M;
+
+        if (ekf_altitude_update_range(range_m, ekf_attitude_tilt_cos(), lever_m))
         {
             s_range_updates++;
         }
