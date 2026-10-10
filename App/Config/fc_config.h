@@ -450,8 +450,16 @@
  *
  * KHONG dua vao bang tham so: them tham so la doi table_crc, va firmware se
  * bo qua ca bo chinh dang luu trong flash.
+ *
+ * 0,2 -> 0,1 (2026-10-10, kp 16 ki 1): chot o 0,2 m/s may bay con troi them
+ * TB 9,9 / toi da 15 cm trong 1 s sau chot; o 0,1 con 7,8 / 10 cm, chot muon
+ * hon ~0,4 s. Thap hon nua khong lo: treo da chot toc do do duoc van ~0,08
+ * m/s (trung vi) nen chot phu thuoc dao dong ngau nhien ma khong bot troi.
+ * Bay that 0,1 (kp 16 ki 3): troi sau chot trung vi 9,6 cm - KHONG bot so voi
+ * 0,2 - ma chot cham 1,1-1,9 s, co lan 4,4 s (van toc uoc luong gan dung con
+ * dao dong ~0,08). Chot 0,15: dung hoa, chot nhanh hon, troi nhu nhau.
  */
-#define POSHOLD_LOCK_SPEED_MPS 0.2f
+#define POSHOLD_LOCK_SPEED_MPS 0.15f
 
 /* ==========================================================================
  * OFFBOARD — nhan lenh van toc tu may tinh nhung qua MAVLink

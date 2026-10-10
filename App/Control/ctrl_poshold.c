@@ -167,13 +167,29 @@ bool ctrl_poshold_update(float dt, float *roll_rad, float *pitch_rad)
     const float err_fwd   = tgt_fwd   - v_fwd;
     const float err_right = tgt_right - v_right;
 
-    /* --- Tích phân, chống gió --- */
-    s_int_x = fc_constrainf(s_int_x + g_params.poshold_vel_ki * err_fwd   * dt,
-                            -g_params.poshold_i_limit_deg,
-                            g_params.poshold_i_limit_deg);
-    s_int_y = fc_constrainf(s_int_y + g_params.poshold_vel_ki * err_right * dt,
-                            -g_params.poshold_i_limit_deg,
-                            g_params.poshold_i_limit_deg);
+    /*
+     * --- Tích phân, chống gió ---
+     *
+     * Chống tích dồn: lệnh góc (P + I hiện tại) đã chạm trần nghiêng mà sai
+     * số còn đẩy cùng chiều thì KHÔNG cộng thêm. Bay 10-10 (kp 14, ki 6) đẩy
+     * hết cần: góc kẹp ở 15° suốt lúc tăng tốc nhưng I vẫn tích, tới đích thì
+     * phần dư đẩy vận tốc vượt 15-25 %. Sai số đổi chiều thì vẫn cho tích để
+     * I tự xả.
+     */
+    const float tilt_lim = g_params.poshold_max_tilt_deg;
+    const float u_fwd    = g_params.poshold_vel_kp * err_fwd   + s_int_x;
+    const float u_right  = g_params.poshold_vel_kp * err_right + s_int_y;
+
+    if (!(fabsf(u_fwd) >= tilt_lim && u_fwd * err_fwd > 0.0f)) {
+        s_int_x = fc_constrainf(s_int_x + g_params.poshold_vel_ki * err_fwd * dt,
+                                -g_params.poshold_i_limit_deg,
+                                g_params.poshold_i_limit_deg);
+    }
+    if (!(fabsf(u_right) >= tilt_lim && u_right * err_right > 0.0f)) {
+        s_int_y = fc_constrainf(s_int_y + g_params.poshold_vel_ki * err_right * dt,
+                                -g_params.poshold_i_limit_deg,
+                                g_params.poshold_i_limit_deg);
+    }
 
     /*
      * --- Sai số vận tốc -> góc nghiêng ---
