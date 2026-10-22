@@ -41,6 +41,7 @@
 #include "ctrl_angle.h"
 #include "ctrl_rate.h"
 #include "mixer.h"
+#include "servo.h"
 #include "dbg_console.h"
 #include "tlm_port.h"
 #include "tlm_stream.h"
@@ -709,6 +710,8 @@ int main(void)
     dbg_println("DShot300: LOI - khong bat duoc kenh PWM TIM1");
   }
 
+  servo_init(); /* TIM4 50 Hz: kep PD14 dong, camera PD15 o giua */
+
   /*
    * Telemetry nhi phan ra USART3 (PD8/PD9) @921600.
    *
@@ -790,6 +793,7 @@ int main(void)
     ctrl_angle_update(micros());    /* chon che do -> setpoint toc do goc  */
     ctrl_rate_update();             /* PID toc do goc -> ctrl.pid_output        */
     mixer_update();                 /* lenh dieu khien -> muc ga 4 motor        */
+    servo_update();                 /* kep + camera, theo quyen RC/Pi          */
     dshot_update(micros());         /* phat khung DShot cho 4 ESC               */
     icm42688_notch_track(micros()); /* notch gyro bam theo ga, 100 Hz        */
     bmp388_update();                /* xu ly mau baro va phat lenh doc I2C ke tiep */

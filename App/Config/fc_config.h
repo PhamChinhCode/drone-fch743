@@ -1902,6 +1902,32 @@
 #define LOG_SWITCH_ON_THRESHOLD 1500
 #define LOG_SWITCH_OFF_THRESHOLD 1300
 
+/*
+ * Hai servo tren TIM4 - xem App/Control/servo.h ve quyen dieu khien.
+ *
+ * Kenh RC: -1 = khong dieu khien bang RC. Mac dinh 8 = ch9 (kep, cong tac
+ * 2 nac) va 9 = ch10 (camera, nut xoay), vi ch5..ch8 da co chu.
+ *
+ * Xung (us): CHUA DO tren co cau that - 1100..1900 la dai an toan cua
+ * ES08MD II. Do lai bang 'set' roi 'save'. cam_min > cam_max de dao chieu.
+ */
+#define SERVO_GRIP_CHANNEL 8
+#define SERVO_CAM_CHANNEL 9
+#define SERVO_GRIP_OPEN_US 1100
+#define SERVO_GRIP_CLOSE_US 1900
+#define SERVO_CAM_MIN_US 1100
+#define SERVO_CAM_MAX_US 1900
+
+/* Nguong cong tac kep, co tre giong cong tac log. */
+#define SERVO_GRIP_CLOSE_THRESHOLD 1500
+#define SERVO_GRIP_OPEN_THRESHOLD 1300
+
+/*
+ * Pi tra quyen ve RC: servo giu vi tri cho toi khi kenh RC lech qua muc nay
+ * (don vi tho CRSF, ~12% hanh trinh) so voi luc nhan quyen.
+ */
+#define SERVO_RC_PICKUP_DELTA 200
+
 #define DBG_LINE_MAX 200          /* do dai toi da mot dong (STATUS dai nhat) */
 #define DBG_DEFAULT_RATE_HZ 20    /* 20 dòng/giây, mắt đọc kịp */
 #define DBG_HEADER_EVERY_LINES 20 /* in lại dòng tiêu đề     */

@@ -254,6 +254,10 @@ P(arm_switch_off_threshold,  uint16_t, PT_U16, 0, 172.0f, 1811.0f, ARM_SWITCH_OF
 P(arm_hold_time_ms,          uint16_t, PT_U16, 0, 0.0f,   2000.0f, ARM_HOLD_TIME_MS)
 P(log_switch_on_threshold,  uint16_t, PT_U16, 0, 172.0f, 1811.0f, LOG_SWITCH_ON_THRESHOLD)
 P(log_switch_off_threshold, uint16_t, PT_U16, 0, 172.0f, 1811.0f, LOG_SWITCH_OFF_THRESHOLD)
+P(servo_grip_open_us,       uint16_t, PT_U16, 0, 500.0f, 2500.0f, SERVO_GRIP_OPEN_US)
+P(servo_grip_close_us,      uint16_t, PT_U16, 0, 500.0f, 2500.0f, SERVO_GRIP_CLOSE_US)
+P(servo_cam_min_us,         uint16_t, PT_U16, 0, 500.0f, 2500.0f, SERVO_CAM_MIN_US)
+P(servo_cam_max_us,         uint16_t, PT_U16, 0, 500.0f, 2500.0f, SERVO_CAM_MAX_US)
 P(imu_gyro_fs_dps,           uint16_t, PT_U16, PARAM_FLAG_REBOOT, 250.0f, 2000.0f, IMU_GYRO_FS_DPS)
 P(imu_calib_sample_count,    uint16_t, PT_U16, 0, 100.0f, 8000.0f, IMU_CALIB_SAMPLE_COUNT)
 P(imu2_odr_hz,               uint16_t, PT_U16, PARAM_FLAG_REBOOT, 120.0f, 1920.0f, IMU2_ODR_HZ)
@@ -302,6 +306,10 @@ P(rc_mode_channel,       int8_t,  PT_I8, PARAM_FLAG_DANGER, -1.0f, 15.0f, RC_MOD
 
 /* -1 = khong dung cong tac, ghi log khi ARM nhu truoc. */
 P(log_switch_channel, int8_t, PT_I8, 0, -1.0f, 15.0f, LOG_SWITCH_CHANNEL)
+
+/* -1 = servo khong nghe RC. Xem App/Control/servo.h. */
+P(servo_grip_channel, int8_t, PT_I8, 0, -1.0f, 15.0f, SERVO_GRIP_CHANNEL)
+P(servo_cam_channel,  int8_t, PT_I8, 0, -1.0f, 15.0f, SERVO_CAM_CHANNEL)
 
 /* 0 = go ACRO khoi cong tac (mac dinh). Van giu ACRO lam che do du phong. */
 P(rc_mode_acro_enable,   uint8_t, PT_U8, PARAM_FLAG_DANGER, 0.0f, 1.0f, RC_MODE_ACRO_ENABLE)

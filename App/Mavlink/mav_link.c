@@ -18,6 +18,7 @@
 #include "fc_time.h"
 #include "arming.h"
 #include "ctrl_offboard.h"
+#include "servo.h"
 #include "param_table.h"
 #include "main.h"
 #include "fc_git_version.h"   /* sinh tu cmake/fc_git_version.cmake */
@@ -1055,6 +1056,38 @@ static void handle_command_long(const mavlink_message_t *msg)
         if (cmd.param1 == (float)MAVLINK_MSG_ID_AUTOPILOT_VERSION) {
             send_autopilot_version();
             result = MAV_RESULT_ACCEPTED;
+        }
+    }
+    else if (cmd.command == MAV_CMD_DO_GRIPPER) {
+        /*
+         * Kẹp hàng (PD14). param1 = 0 hoặc 1 (chỉ có một bộ kẹp), param2 =
+         * RELEASE / GRAB. Quyền giống quyền bay — xem servo.h. DENIED = Pi
+         * không có quyền, chờ người lái; đừng thử lại.
+         *
+         * ACCEPTED chỉ là xung đã đổi: servo không có phản hồi, Pi tự chờ
+         * servo chạy hết hành trình (gripper_controller_node chờ travel_s).
+         */
+        const bool grab    = (cmd.param2 == (float)GRIPPER_ACTION_GRAB);
+        const bool release = (cmd.param2 == (float)GRIPPER_ACTION_RELEASE);
+
+        if ((cmd.param1 != 0.0f && cmd.param1 != 1.0f) || !(grab || release)) {
+            result = MAV_RESULT_DENIED;
+        } else {
+            result = servo_link_grip(grab) ? MAV_RESULT_ACCEPTED : MAV_RESULT_DENIED;
+        }
+    }
+    else if (cmd.command == MAV_CMD_DO_SET_SERVO) {
+        /*
+         * Chỉ servo số 2 = camera (PD15). param2 = độ rộng xung µs, FC tự kẹp
+         * vào servo_cam_min_us..servo_cam_max_us. Kẹp hàng đi lệnh 211, không
+         * đi lệnh này, để Pi không phải biết xung đóng/mở.
+         */
+        if (cmd.param1 != 2.0f || !isfinite(cmd.param2) ||
+            cmd.param2 < 0.0f || cmd.param2 > 65535.0f) {
+            result = MAV_RESULT_DENIED;
+        } else {
+            result = servo_link_cam_us((uint16_t)cmd.param2) ? MAV_RESULT_ACCEPTED
+                                                              : MAV_RESULT_DENIED;
         }
     }
 
