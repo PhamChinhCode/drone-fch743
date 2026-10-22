@@ -21,7 +21,6 @@ static uint16_t s_grip_us;
 static uint16_t s_cam_us;
 
 static bool     s_pi;            /* Pi có quyền ở nhịp trước              */
-static bool     s_grip_closed;   /* nấc công tắc kẹp trên tay cầm, có trễ */
 
 /* Sau khi Pi trả quyền: chờ người lái động vào kênh mới bám theo RC. */
 static bool     s_grip_wait;
@@ -29,30 +28,52 @@ static bool     s_cam_wait;
 static uint16_t s_grip_ref;
 static uint16_t s_cam_ref;
 
+/**
+ * Kẹp xung vào dải [a, b] rồi ghi ra kênh. a > b là hợp lệ (đảo chiều), nên
+ * kẹp theo cặp đã sắp.
+ */
+static uint16_t write_us(uint32_t channel, uint16_t us, int32_t a, int32_t b)
+{
+    const uint16_t out = (uint16_t)fc_constrain_i32(us, (a < b) ? a : b, (a < b) ? b : a);
+    __HAL_TIM_SET_COMPARE(&htim4, channel, out);
+    return out;
+}
+
 static void write_grip(uint16_t us)
 {
-    s_grip_us = us;
-    __HAL_TIM_SET_COMPARE(&htim4, SERVO_CH_GRIP, us);
+    s_grip_us = write_us(SERVO_CH_GRIP, us,
+                         g_params.servo_grip_open_us, g_params.servo_grip_close_us);
 }
 
 static void write_cam(uint16_t us)
 {
-    const int32_t a = g_params.servo_cam_min_us;
-    const int32_t b = g_params.servo_cam_max_us;
-
-    /* min > max là hợp lệ (đảo chiều camera), nên kẹp theo cặp đã sắp. */
-    s_cam_us = (uint16_t)fc_constrain_i32(us, (a < b) ? a : b, (a < b) ? b : a);
-    __HAL_TIM_SET_COMPARE(&htim4, SERVO_CH_CAM, s_cam_us);
+    s_cam_us = write_us(SERVO_CH_CAM, us,
+                        g_params.servo_cam_min_us, g_params.servo_cam_max_us);
 }
 
-/** Kênh bị tắt (-1) hoặc ngoài dải thì trả false. */
+/** Đổi giá trị kênh CRSF 172..1811 thành xung trong [a, b], a ứng với 172. */
+static uint16_t rc_to_us(uint16_t raw, int32_t a, int32_t b)
+{
+    const int32_t r = fc_constrain_i32(raw, RC_CRSF_CHANNEL_MIN, RC_CRSF_CHANNEL_MAX);
+
+    return (uint16_t)(a + (r - RC_CRSF_CHANNEL_MIN) * (b - a)
+                          / (RC_CRSF_CHANNEL_MAX - RC_CRSF_CHANNEL_MIN));
+}
+
+/**
+ * Kênh bị tắt (-1), ngoài dải, hoặc tay cầm không gửi kênh đó thì trả false.
+ *
+ * ELRS ở chế độ ít hơn 16 kênh gửi các kênh thiếu bằng 0 (đo 2026-10-22: GX12
+ * CH13 = CH14 = 0). Không chặn thì 0 bị kẹp về 172 và servo bị kéo hết về một
+ * đầu. Kênh thật luôn >= 172; dưới một nửa số đó coi như không có kênh.
+ */
 static bool rc_raw(int8_t ch, uint16_t *raw)
 {
     if (ch < 0 || ch >= RC_CHANNEL_COUNT) {
         return false;
     }
     *raw = g_fc.rc.channel_raw[ch];
-    return true;
+    return *raw >= RC_CRSF_CHANNEL_MIN / 2;
 }
 
 /** Người lái đã động vào kênh kể từ lúc nhận lại quyền chưa. */
@@ -67,10 +88,9 @@ static bool picked_up(bool *wait, uint16_t ref, uint16_t raw)
 
 void servo_init(void)
 {
-    s_pi          = false;
-    s_grip_closed = true;
-    s_grip_wait   = false;
-    s_cam_wait    = false;
+    s_pi        = false;
+    s_grip_wait = false;
+    s_cam_wait  = false;
 
     write_grip(g_params.servo_grip_close_us);
     write_cam((uint16_t)((g_params.servo_cam_min_us + g_params.servo_cam_max_us) / 2));
@@ -110,27 +130,15 @@ void servo_update(void)
         s_cam_ref   = cam_raw;
     }
 
-    if (grip_on) {
-        /* Trễ hai ngưỡng như công tắc log: rung quanh ngưỡng không làm kẹp nhả. */
-        if (grip_raw >= SERVO_GRIP_CLOSE_THRESHOLD) {
-            s_grip_closed = true;
-        } else if (grip_raw <= SERVO_GRIP_OPEN_THRESHOLD) {
-            s_grip_closed = false;
-        }
-
-        if (picked_up(&s_grip_wait, s_grip_ref, grip_raw)) {
-            write_grip(s_grip_closed ? g_params.servo_grip_close_us
-                                     : g_params.servo_grip_open_us);
-        }
+    /* Núm xoay: đầu 172 = mở / cam_min, đầu 1811 = đóng / cam_max. */
+    if (grip_on && picked_up(&s_grip_wait, s_grip_ref, grip_raw)) {
+        write_grip(rc_to_us(grip_raw, g_params.servo_grip_open_us,
+                            g_params.servo_grip_close_us));
     }
 
     if (cam_on && picked_up(&s_cam_wait, s_cam_ref, cam_raw)) {
-        const int32_t raw = fc_constrain_i32(cam_raw, RC_CRSF_CHANNEL_MIN, RC_CRSF_CHANNEL_MAX);
-        const int32_t a   = g_params.servo_cam_min_us;
-        const int32_t b   = g_params.servo_cam_max_us;
-
-        write_cam((uint16_t)(a + (raw - RC_CRSF_CHANNEL_MIN) * (b - a)
-                                 / (RC_CRSF_CHANNEL_MAX - RC_CRSF_CHANNEL_MIN)));
+        write_cam(rc_to_us(cam_raw, g_params.servo_cam_min_us,
+                           g_params.servo_cam_max_us));
     }
 }
 
@@ -140,6 +148,15 @@ bool servo_link_grip(bool close)
         return false;
     }
     servo_set_grip(close);
+    return true;
+}
+
+bool servo_link_grip_us(uint16_t pulse_us)
+{
+    if (!ctrl_offboard_pi_has_authority()) {
+        return false;
+    }
+    write_grip(pulse_us);
     return true;
 }
 
@@ -157,6 +174,7 @@ void servo_set_grip(bool close)
     write_grip(close ? g_params.servo_grip_close_us : g_params.servo_grip_open_us);
 }
 
-void servo_set_cam_us(uint16_t pulse_us) { write_cam(pulse_us); }
-uint16_t servo_grip_us(void)             { return s_grip_us; }
-uint16_t servo_cam_us(void)              { return s_cam_us;  }
+void servo_set_grip_us(uint16_t pulse_us) { write_grip(pulse_us); }
+void servo_set_cam_us(uint16_t pulse_us)  { write_cam(pulse_us); }
+uint16_t servo_grip_us(void)              { return s_grip_us; }
+uint16_t servo_cam_us(void)               { return s_cam_us;  }

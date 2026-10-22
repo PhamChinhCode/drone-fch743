@@ -10,12 +10,19 @@
  *   Nghĩa là: không có Pi, ch8 tắt, hay người lái đẩy cần giành lái (OFFBOARD
  *   về KHOA) thì servo về tay RC, cùng một lúc với vòng bay.
  *
+ * RC: cả hai servo bám TỶ LỆ theo một núm xoay (mặc định CH13 kẹp, CH14
+ *   camera — hai núm biến trở của RadioMaster GX12). Núm ở đầu 172 = kẹp mở /
+ *   camera cam_min, đầu 1811 = kẹp đóng / camera cam_max.
+ *
+ * MAVLink: DO_SET_SERVO đặt xung µs (servo 1 = kẹp, 2 = camera); DO_GRIPPER
+ *   đặt nhanh hai nấc mở/đóng. Xung luôn bị kẹp vào dải tham số của servo đó.
+ *
  * CHUYỂN QUYỀN KHÔNG LÀM SERVO GIẬT:
  *
  *   Pi -> RC: servo GIỮ NGUYÊN vị trí Pi đặt, cho tới khi người lái thật sự
- *   động vào kênh của servo đó (lệch quá SERVO_RC_PICKUP_DELTA so với lúc nhận
- *   quyền). Không làm vậy thì đang chở hàng mà công tắc kẹp trên tay cầm nằm
- *   ở nấc "nhả", người lái vừa đẩy cần giành lái là hàng rơi.
+ *   động vào núm của servo đó (lệch quá SERVO_RC_PICKUP_DELTA so với lúc nhận
+ *   quyền). Không làm vậy thì đang chở hàng mà núm kẹp trên tay cầm nằm ở đầu
+ *   "mở", người lái vừa đẩy cần giành lái là hàng rơi.
  *
  *   RC -> Pi: servo giữ nguyên cho tới lệnh đầu tiên của Pi.
  *
@@ -37,6 +44,7 @@ void servo_update(void);
 
 /* Cửa vào từ MAVLink. Trả false nếu Pi đang không có quyền. */
 bool servo_link_grip(bool close);
+bool servo_link_grip_us(uint16_t pulse_us);
 bool servo_link_cam_us(uint16_t pulse_us);
 
 /*
@@ -44,6 +52,7 @@ bool servo_link_cam_us(uint16_t pulse_us);
  * sóng sẽ ghi đè ngay nhịp sau, nên chỉ có tác dụng khi không cắm thu RC.
  */
 void servo_set_grip(bool close);
+void servo_set_grip_us(uint16_t pulse_us);
 void servo_set_cam_us(uint16_t pulse_us);
 
 /* Xung đang xuất, µs. */

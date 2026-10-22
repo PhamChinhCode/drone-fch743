@@ -412,7 +412,7 @@ static void cmd_help(void)
     cli_out("  port [uart|usb|here]  doi duong telemetry; here = duong vua gui lenh");
     cli_out("  flash [info|test|erase|rescan|dump|stop|sim <n>]  log tren QSPI W25Q64");
     cli_out("  vib [on|off]         gyro+accel chua loc 8 kHz qua USB (can port usb)");
-    cli_out("  servo [grip open|close | cam <us>|mid]  thu servo khi KHONG cam thu RC");
+    cli_out("  servo [grip open|close|<us> | cam <us>|mid]  thu servo khi KHONG cam thu RC");
 }
 
 static void cmd_version(void)
@@ -1084,12 +1084,14 @@ static void cmd_servo(const char *args)
             servo_set_grip(false);
         } else if (strcmp(args, "grip close") == 0) {
             servo_set_grip(true);
+        } else if (strncmp(args, "grip ", 5) == 0) {
+            servo_set_grip_us((uint16_t)atoi(args + 5));
         } else if (strcmp(args, "cam mid") == 0) {
             servo_set_cam_us((uint16_t)((g_params.servo_cam_min_us + g_params.servo_cam_max_us) / 2));
         } else if (strncmp(args, "cam ", 4) == 0) {
             servo_set_cam_us((uint16_t)atoi(args + 4));
         } else {
-            cli_out("ERR: servo grip open|close, servo cam <us>|mid");
+            cli_out("ERR: servo grip open|close|<us>, servo cam <us>|mid");
             return;
         }
     }

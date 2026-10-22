@@ -199,6 +199,41 @@ void mav_port_error_isr(void)
 
 uint16_t mav_port_read(uint8_t *dst, uint16_t max_len)
 {
+    /*
+     * Tự chữa RX. Đo 2026-10-22: một loạt byte rác (cắm dây UART8 khi FC đang
+     * chạy, hay Pi gửi sai baud) làm uplink chết hẳn tới khi reset:
+     *
+     *   lỗi khung -> HAL_UART_IRQHandler tắt DMAR, gọi HAL_DMA_Abort_IT ->
+     *   stream dừng (EN = 0) nhưng cờ TCIF KHÔNG bao giờ lên (đọc HISR = 0) ->
+     *   HAL_DMA_IRQHandler không bao giờ kết thúc pha huỷ -> hdmarx kẹt
+     *   State = ABORT, Lock = LOCKED -> HAL_UART_ErrorCallback không bao giờ
+     *   được gọi, nên mav_port_error_isr() không chạy, và mọi lần
+     *   HAL_UART_Receive_DMA sau đó đều trả lỗi DMA.
+     *
+     * Nên ở đây, mỗi vòng lặp: thấy UART đã thôi nhận thì tự kết thúc pha huỷ
+     * (chỉ khi stream đã thật sự dừng) rồi chạy lại RX.
+     *
+     * Đặt TRƯỚC phép thử s_rx_running: lần khởi động lại thất bại hạ cờ đó,
+     * vòng sau vẫn phải thử lại được.
+     */
+    if (MAV_UART.RxState == HAL_UART_STATE_READY) {
+        const uint32_t primask = critical_enter();
+        DMA_HandleTypeDef *dma = MAV_UART.hdmarx;
+        if (dma->State == HAL_DMA_STATE_ABORT &&
+            (((DMA_Stream_TypeDef *)dma->Instance)->CR & DMA_SxCR_EN) == 0U) {
+            dma->State = HAL_DMA_STATE_READY;
+            __HAL_UNLOCK(dma);
+        }
+        if (MAV_UART.RxState == HAL_UART_STATE_READY && dma->State == HAL_DMA_STATE_READY) {
+            /* ORE còn treo thì vừa bật lại EIE là ngắt lỗi bắn ngay. */
+            __HAL_UART_CLEAR_FLAG(&MAV_UART, UART_CLEAR_OREF | UART_CLEAR_FEF |
+                                             UART_CLEAR_NEF | UART_CLEAR_PEF);
+            s_rx_running = (HAL_UART_Receive_DMA(&MAV_UART, s_rx_buf, MAV_RX_BUFFER_SIZE) == HAL_OK);
+            s_rx_tail    = 0;
+        }
+        critical_exit(primask);
+    }
+
     if (dst == NULL || max_len == 0 || !s_rx_running) {
         return 0;
     }

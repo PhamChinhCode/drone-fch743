@@ -1905,22 +1905,19 @@
 /*
  * Hai servo tren TIM4 - xem App/Control/servo.h ve quyen dieu khien.
  *
- * Kenh RC: -1 = khong dieu khien bang RC. Mac dinh 8 = ch9 (kep, cong tac
- * 2 nac) va 9 = ch10 (camera, nut xoay), vi ch5..ch8 da co chu.
+ * Kenh RC: -1 = khong dieu khien bang RC. Mac dinh 12 = CH13 (kep) va
+ * 13 = CH14 (camera): hai num bien tro cua RadioMaster GX12. Ca hai bam TY LE
+ * theo num: dau 172 = kep mo / cam_min, dau 1811 = kep dong / cam_max.
  *
  * Xung (us): CHUA DO tren co cau that - 1100..1900 la dai an toan cua
  * ES08MD II. Do lai bang 'set' roi 'save'. cam_min > cam_max de dao chieu.
  */
-#define SERVO_GRIP_CHANNEL 8
-#define SERVO_CAM_CHANNEL 9
+#define SERVO_GRIP_CHANNEL 12
+#define SERVO_CAM_CHANNEL 13
 #define SERVO_GRIP_OPEN_US 1100
 #define SERVO_GRIP_CLOSE_US 1900
 #define SERVO_CAM_MIN_US 1100
 #define SERVO_CAM_MAX_US 1900
-
-/* Nguong cong tac kep, co tre giong cong tac log. */
-#define SERVO_GRIP_CLOSE_THRESHOLD 1500
-#define SERVO_GRIP_OPEN_THRESHOLD 1300
 
 /*
  * Pi tra quyen ve RC: servo giu vi tri cho toi khi kenh RC lech qua muc nay

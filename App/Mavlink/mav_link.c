@@ -1078,16 +1078,19 @@ static void handle_command_long(const mavlink_message_t *msg)
     }
     else if (cmd.command == MAV_CMD_DO_SET_SERVO) {
         /*
-         * Chỉ servo số 2 = camera (PD15). param2 = độ rộng xung µs, FC tự kẹp
-         * vào servo_cam_min_us..servo_cam_max_us. Kẹp hàng đi lệnh 211, không
-         * đi lệnh này, để Pi không phải biết xung đóng/mở.
+         * Servo 1 = kẹp (PD14), servo 2 = camera (PD15). param2 = độ rộng xung
+         * µs, FC tự kẹp vào dải tham số của servo đó (servo_grip_open_us..
+         * close_us, servo_cam_min_us..max_us). Muốn chỉ mở/đóng hẳn thì dùng
+         * DO_GRIPPER, khỏi phải biết xung.
          */
-        if (cmd.param1 != 2.0f || !isfinite(cmd.param2) ||
+        if ((cmd.param1 != 1.0f && cmd.param1 != 2.0f) || !isfinite(cmd.param2) ||
             cmd.param2 < 0.0f || cmd.param2 > 65535.0f) {
             result = MAV_RESULT_DENIED;
         } else {
-            result = servo_link_cam_us((uint16_t)cmd.param2) ? MAV_RESULT_ACCEPTED
-                                                              : MAV_RESULT_DENIED;
+            const uint16_t us = (uint16_t)cmd.param2;
+            const bool ok = (cmd.param1 == 1.0f) ? servo_link_grip_us(us)
+                                                 : servo_link_cam_us(us);
+            result = ok ? MAV_RESULT_ACCEPTED : MAV_RESULT_DENIED;
         }
     }
 
