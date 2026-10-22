@@ -7,6 +7,7 @@
 #include "fc_state.h"
 #include "fc_time.h"
 #include "main.h"
+#include "uart_rx_dma.h"
 
 #if GPS_ENABLE
 
@@ -501,6 +502,13 @@ bool gps_ubx_init(void)
 bool gps_ubx_update(uint32_t now_ms)
 {
     bool got_pvt = false;
+
+    /* DMA chết im mà HAL không gọi callback lỗi thì tự chạy lại — xem uart_rx_dma.h. */
+    if (uart_rx_dma_heal(&huart7, s_rx, GPS_RX_BUFFER_SIZE)) {
+        s_tail = 0;
+        parser_reset();
+        s_uart_errors++;
+    }
 
     if (s_uart_err_pending) {
         /*

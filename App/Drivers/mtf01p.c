@@ -8,6 +8,7 @@
 #include "param_table.h"
 #include "fc_time.h"
 #include "main.h"
+#include "uart_rx_dma.h"
 
 extern UART_HandleTypeDef huart4;
 extern DMA_HandleTypeDef  hdma_uart4_rx;
@@ -298,6 +299,13 @@ bool mtf01p_init(void)
 uint8_t mtf01p_update(void)
 {
     uint8_t frames = 0;
+
+    /* DMA chết im mà HAL không gọi callback lỗi thì tự chạy lại — xem uart_rx_dma.h. */
+    if (uart_rx_dma_heal(&huart4, s_rx, FLOW_RX_BUFFER_SIZE)) {
+        s_tail      = 0;
+        s_msp.state = MSP_IDLE;
+        g_fc.flow.error_count++;
+    }
 
     /* DMA đếm lùi: vị trí ghi hiện tại suy ra từ số byte còn lại. */
     const uint16_t remaining = (uint16_t)__HAL_DMA_GET_COUNTER(&hdma_uart4_rx);

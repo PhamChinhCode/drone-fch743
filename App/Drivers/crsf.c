@@ -8,6 +8,7 @@
 #include "param_table.h"
 #include "fc_time.h"
 #include "main.h"
+#include "uart_rx_dma.h"
 
 extern UART_HandleTypeDef huart2;
 extern DMA_HandleTypeDef  hdma_usart2_rx;
@@ -306,6 +307,17 @@ bool crsf_init(void)
 uint8_t crsf_update(void)
 {
     uint8_t frames = 0;
+
+    /*
+     * DMA chết im mà HAL không gọi callback lỗi thì tự chạy lại — xem
+     * uart_rx_dma.h. Chưa chạy lại được thì bộ đếm DMA đứng yên, không có
+     * khung mới, và nhánh hết giờ bên dưới đưa vào failsafe như mất sóng.
+     */
+    if (uart_rx_dma_heal(&huart2, s_rx, RC_RX_BUFFER_SIZE)) {
+        s_tail        = 0;
+        s_frame.state = CRSF_IDLE;
+        g_fc.rc.error_count++;
+    }
 
     /* DMA đếm lùi: vị trí ghi hiện tại suy ra từ số byte còn lại. */
     const uint16_t remaining = (uint16_t)__HAL_DMA_GET_COUNTER(&hdma_usart2_rx);

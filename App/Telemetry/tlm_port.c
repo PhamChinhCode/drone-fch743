@@ -5,6 +5,7 @@
 
 #include "tlm_port.h"
 #include "main.h"
+#include "uart_rx_dma.h"
 #include "usbd_cdc_if.h"
 
 /* ==========================================================================
@@ -339,6 +340,11 @@ uint16_t tlm_port_read(uint8_t *dst, uint16_t max_len)
      * cho TLM_PORT_UART, đọc bộ đếm của một DMA chưa chạy sẽ ra số vô nghĩa.
      */
     if (s_port == TLM_PORT_UART) {
+        /* DMA chết im mà HAL không gọi callback lỗi thì tự chạy lại — xem uart_rx_dma.h. */
+        if (uart_rx_dma_heal(&TLM_UART, s_rx_buf, TLM_RX_BUFFER_SIZE)) {
+            s_rx_tail = 0;
+        }
+
         const uint16_t dma_remaining = (uint16_t)__HAL_DMA_GET_COUNTER(&TLM_UART_DMA_RX);
         const uint16_t head = (uint16_t)(TLM_RX_BUFFER_SIZE - dma_remaining);
 
