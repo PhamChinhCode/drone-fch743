@@ -1240,7 +1240,8 @@
  * GPS 4 hướng: lệch +7 / 0 / -2 / -2°. Đổi về 0 thì PHẢI đo lại bộ số QMC5883P.
  */
 /* 2026-09-29: IST8310 hong -> ve QMC5883P tren bo (xem ghi chu o MAG_OFFSET_*). */
-#define MAG_I2C_USE_GPS_MAG 0
+/* 2026-10-27: IST8310 chay lai tu 10-19 -> BAT lai; bo so mag_* da luu la cua QMC, phai hieu chuan lai. */
+#define MAG_I2C_USE_GPS_MAG 1
 
 /** Timeout cho mỗi lượt Mem_Read/Write lúc init. Nhẹ hơn BARO vì ít byte hơn. */
 #define MAG_I2C_TIMEOUT_MS 20
