@@ -1921,6 +1921,15 @@
 #define SERVO_CAM_MAX_US 1900
 
 /*
+ * Goc camera luc bat nguon (user 2026-10-28): +20 do ve mui = 1762 us theo bang
+ * goc cua Pi (mission.yaml camera_tilt pulse_us). Nam tren bai camera chi cao
+ * ~0,15 m, thang xuong khong thay tron tag nao; +20 do thay tron tag nho de Pi
+ * neo vi tri ngay tren dat (Pi chua co quyen nen chua doi duoc servo). Giu toi
+ * khi nguoi lai vang num camera. Khong phai tham so (khong doi table_crc).
+ */
+#define SERVO_CAM_BOOT_US 1762
+
+/*
  * Pi tra quyen ve RC: servo giu vi tri cho toi khi kenh RC lech qua muc nay
  * (don vi tho CRSF, ~12% hanh trinh) so voi luc nhan quyen.
  */

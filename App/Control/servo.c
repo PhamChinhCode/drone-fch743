@@ -28,6 +28,10 @@ static bool     s_cam_wait;
 static uint16_t s_grip_ref;
 static uint16_t s_cam_ref;
 
+/* Vừa khởi động, chưa chốt mốc núm kẹp / núm camera — xem servo_init(). */
+static bool     s_grip_boot;
+static bool     s_cam_boot;
+
 /**
  * Kẹp xung vào dải [a, b] rồi ghi ra kênh. a > b là hợp lệ (đảo chiều), nên
  * kẹp theo cặp đã sắp.
@@ -91,9 +95,13 @@ void servo_init(void)
     s_pi        = false;
     s_grip_wait = false;
     s_cam_wait  = false;
+    s_grip_boot = true;
+    s_cam_boot  = true;
 
-    write_grip(g_params.servo_grip_close_us);
-    write_cam((uint16_t)((g_params.servo_cam_min_us + g_params.servo_cam_max_us) / 2));
+    /* User 2026-10-27: bật nguồn là kẹp MỞ HẾT, giữ mở tới khi người lái vặn núm. */
+    write_grip(g_params.servo_grip_open_us);
+    /* User 2026-10-28: camera +20° về mũi để thấy tag nhỏ khi nằm trên bãi. */
+    write_cam(SERVO_CAM_BOOT_US);
 
     (void)HAL_TIM_PWM_Start(&htim4, SERVO_CH_GRIP);
     (void)HAL_TIM_PWM_Start(&htim4, SERVO_CH_CAM);
@@ -128,6 +136,22 @@ void servo_update(void)
         s_cam_wait  = true;
         s_grip_ref  = grip_raw;
         s_cam_ref   = cam_raw;
+    }
+
+    /*
+     * Khung RC đầu tiên có kênh kẹp sau khi bật nguồn: chốt mốc như lúc nhận lại
+     * quyền từ Pi. Núm đang nằm ở đầu "đóng" thì kẹp vẫn mở cho tới khi người lái
+     * vặn núm, thay vì đóng ngay lúc thu RC vào sóng.
+     */
+    if (s_grip_boot && grip_on) {
+        s_grip_boot = false;
+        s_grip_wait = true;
+        s_grip_ref  = grip_raw;
+    }
+    if (s_cam_boot && cam_on) {
+        s_cam_boot = false;
+        s_cam_wait = true;
+        s_cam_ref  = cam_raw;
     }
 
     /* Núm xoay: đầu 172 = mở / cam_min, đầu 1811 = đóng / cam_max. */

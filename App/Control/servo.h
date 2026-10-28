@@ -28,6 +28,9 @@
  *
  *   Mất sóng RC: giữ nguyên vị trí cuối.
  *
+ *   Bật nguồn: kẹp MỞ HẾT và giữ mở cho tới khi người lái động vào núm kẹp
+ *   (cùng luật như Pi -> RC), dù núm đang nằm ở đâu.
+ *
  * Servo không có phản hồi. ACCEPTED chỉ có nghĩa là xung đã đổi — Pi tự chờ
  * servo chạy hết hành trình.
  */
@@ -36,7 +39,7 @@
 
 #include "fc_types.h"
 
-/** Bật PWM TIM4, đặt vị trí khởi động: kẹp ĐÓNG, camera ở giữa. */
+/** Bật PWM TIM4, đặt vị trí khởi động: kẹp MỞ HẾT, camera SERVO_CAM_BOOT_US (+20°). */
 void servo_init(void);
 
 /** Đọc RC, áp quyền điều khiển. Gọi mỗi vòng lặp chính, SAU ctrl_angle_update(). */
